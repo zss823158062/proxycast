@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { Providers } from "./components/Providers";
+import { Models } from "./components/Models";
 import { Settings } from "./components/Settings";
 import { Logs } from "./components/Logs";
 
-type Page = "dashboard" | "providers" | "settings" | "logs";
+type Page = "dashboard" | "providers" | "models" | "settings" | "logs";
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
@@ -16,6 +17,8 @@ function App() {
         return <Dashboard />;
       case "providers":
         return <Providers />;
+      case "models":
+        return <Models />;
       case "settings":
         return <Settings />;
       case "logs":

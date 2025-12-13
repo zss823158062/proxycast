@@ -1,7 +1,7 @@
-import { LayoutDashboard, Server, Settings, ScrollText } from "lucide-react";
+import { LayoutDashboard, Server, Settings, ScrollText, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Page = "dashboard" | "providers" | "settings" | "logs";
+type Page = "dashboard" | "providers" | "models" | "settings" | "logs";
 
 interface SidebarProps {
   currentPage: Page;
@@ -11,6 +11,7 @@ interface SidebarProps {
 const navItems = [
   { id: "dashboard" as Page, label: "仪表盘", icon: LayoutDashboard },
   { id: "providers" as Page, label: "Provider", icon: Server },
+  { id: "models" as Page, label: "模型", icon: Cpu },
   { id: "logs" as Page, label: "日志", icon: ScrollText },
   { id: "settings" as Page, label: "设置", icon: Settings },
 ];

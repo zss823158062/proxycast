@@ -274,3 +274,16 @@ export async function setClaudeCustomConfig(
     enabled 
   });
 }
+
+
+// ============ Models ============
+
+export interface ModelInfo {
+  id: string;
+  object: string;
+  owned_by: string;
+}
+
+export async function getAvailableModels(): Promise<ModelInfo[]> {
+  return invoke("get_available_models");
+}

@@ -648,6 +648,36 @@ struct TestResult {
     time_ms: u64,
 }
 
+#[derive(serde::Serialize)]
+struct ModelInfo {
+    id: String,
+    object: String,
+    owned_by: String,
+}
+
+#[tauri::command]
+async fn get_available_models() -> Result<Vec<ModelInfo>, String> {
+    Ok(vec![
+        // Kiro/Claude models
+        ModelInfo { id: "claude-sonnet-4-5".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        ModelInfo { id: "claude-sonnet-4-5-20250514".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        ModelInfo { id: "claude-sonnet-4-5-20250929".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        ModelInfo { id: "claude-3-7-sonnet-20250219".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        ModelInfo { id: "claude-3-5-sonnet-latest".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        ModelInfo { id: "claude-opus-4-5-20250514".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        ModelInfo { id: "claude-haiku-4-5-20250514".to_string(), object: "model".to_string(), owned_by: "anthropic".to_string() },
+        // Gemini models
+        ModelInfo { id: "gemini-2.5-flash".to_string(), object: "model".to_string(), owned_by: "google".to_string() },
+        ModelInfo { id: "gemini-2.5-flash-lite".to_string(), object: "model".to_string(), owned_by: "google".to_string() },
+        ModelInfo { id: "gemini-2.5-pro".to_string(), object: "model".to_string(), owned_by: "google".to_string() },
+        ModelInfo { id: "gemini-2.5-pro-preview-06-05".to_string(), object: "model".to_string(), owned_by: "google".to_string() },
+        ModelInfo { id: "gemini-3-pro-preview".to_string(), object: "model".to_string(), owned_by: "google".to_string() },
+        // Qwen models
+        ModelInfo { id: "qwen3-coder-plus".to_string(), object: "model".to_string(), owned_by: "alibaba".to_string() },
+        ModelInfo { id: "qwen3-coder-flash".to_string(), object: "model".to_string(), owned_by: "alibaba".to_string() },
+    ])
+}
+
 #[tauri::command]
 async fn test_api(
     state: tauri::State<'_, AppState>,
@@ -746,6 +776,7 @@ pub fn run() {
             get_logs,
             clear_logs,
             test_api,
+            get_available_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
