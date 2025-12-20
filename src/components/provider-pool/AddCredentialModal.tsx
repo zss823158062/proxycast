@@ -102,6 +102,13 @@ export function AddCredentialModal({
           case "qwen":
             await providerPoolApi.addQwenOAuth(credsFilePath, trimmedName);
             break;
+          case "antigravity":
+            await providerPoolApi.addAntigravityOAuth(
+              credsFilePath,
+              projectId.trim() || undefined,
+              trimmedName,
+            );
+            break;
           case "codex":
             await providerPoolApi.addCodexOAuth(credsFilePath, trimmedName);
             break;
@@ -204,6 +211,8 @@ export function AddCredentialModal({
                     "默认路径: ~/.gemini/oauth_creds.json"}
                   {providerType === "qwen" &&
                     "默认路径: ~/.qwen/oauth_creds.json"}
+                  {providerType === "antigravity" &&
+                    "默认路径: ~/.antigravity/oauth_creds.json"}
                   {providerType === "codex" && "默认路径: ~/.codex/oauth.json"}
                   {providerType === "claude_oauth" &&
                     "默认路径: ~/.claude/oauth.json"}
@@ -212,8 +221,9 @@ export function AddCredentialModal({
                 </p>
               </div>
 
-              {/* Gemini specific: Project ID */}
-              {providerType === "gemini" && (
+              {/* Gemini/Antigravity specific: Project ID */}
+              {(providerType === "gemini" ||
+                providerType === "antigravity") && (
                 <div>
                   <label className="mb-1 block text-sm font-medium">
                     Project ID (可选)
