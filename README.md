@@ -88,33 +88,33 @@
 - `/v1/models` - 模型列表
 - `/v1/messages` - Anthropic Messages API
 - `/v1/messages/count_tokens` - Token 计数
-- `/api/provider/{provider}/v1/*` - Amp CLI 路由
+- `/api/provider/{provider}/v1/*` - Provider 路由
 - `/v0/management/*` - 远程管理 API
 
 ---
 
 ## 📸 界面截图
 
-### Dashboard - 服务控制与 API 测试
-![Dashboard](docs/images/067c7d64-e116-4a30-b533-748873166f37.png)
+### 仪表盘 - 系统状态与监控
+![Dashboard](docs/images/943663ed-b17c-4b32-a74c-c0243ffb3dea.png)
 
-### 凭证池 - 多凭证管理
-![Provider Pool](docs/images/151b4355-821c-4bda-a731-c4367b6b8716.png)
+### 凭证池 - 多凭证管理与配额查询
+![Provider Pool](docs/images/aee62eb5-3aeb-4454-b14d-24b1d5f9a0fe.png)
 
-### API Server - 路由与日志
-![API Server](docs/images/25eb018a-5be2-4f82-ba22-e68f39160cac.png)
+### 路由管理 - 智能路由规则和容错策略
+![Router](docs/images/067c7d64-e116-4a30-b533-748873166f37.png)
 
-### 设置页面 - 服务器配置
-![Settings](docs/images/943663ed-b17c-4b32-a74c-c0243ffb3dea.png)
+### 配置管理 - 客户端配置切换
+![Config](docs/images/25eb018a-5be2-4f82-ba22-e68f39160cac.png)
 
-### AI Clients - 客户端配置
-![AI Clients](docs/images/aee62eb5-3aeb-4454-b14d-24b1d5f9a0fe.png)
+### 扩展 - MCP/Prompts/Skills 管理
+![Extensions](docs/images/ffc70018-aa5f-4738-883d-045614488608.png)
 
-### MCP 服务器管理
-![MCP](docs/images/c7d8236b-ea6c-4496-ada5-288cd0a01738.png)
+### API Server - 服务控制与 API 测试
+![API Server](docs/images/151b4355-821c-4bda-a731-c4367b6b8716.png)
 
-### Prompts 管理
-![Prompts](docs/images/ffc70018-aa5f-4738-883d-045614488608.png)
+### 设置 - 应用参数和偏好
+![Settings](docs/images/c7d8236b-ea6c-4496-ada5-288cd0a01738.png)
 
 ---
 
