@@ -287,7 +287,7 @@ export function ProviderForm({
       return {
         apiKey: "",
         baseUrl: "",
-        primaryModel: "claude-sonnet-4-20250514",
+        primaryModel: "",
         haikuModel: "",
         sonnetModel: "",
         opusModel: "",
@@ -300,7 +300,7 @@ export function ProviderForm({
       return {
         apiKey: "",
         baseUrl: "",
-        primaryModel: "claude-sonnet-4-20250514",
+        primaryModel: "",
         haikuModel: "",
         sonnetModel: "",
         opusModel: "",
@@ -309,7 +309,7 @@ export function ProviderForm({
     return {
       apiKey: env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || "",
       baseUrl: env.ANTHROPIC_BASE_URL || "",
-      primaryModel: env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514",
+      primaryModel: env.ANTHROPIC_MODEL || "",
       haikuModel: env.ANTHROPIC_DEFAULT_HAIKU_MODEL || "",
       sonnetModel: env.ANTHROPIC_DEFAULT_SONNET_MODEL || "",
       opusModel: env.ANTHROPIC_DEFAULT_OPUS_MODEL || "",
@@ -345,9 +345,14 @@ export function ProviderForm({
   const generateJsonFromFields = useCallback(() => {
     const env: Record<string, string> = {};
     if (apiKey) {
+      // 同时设置两个 API Key，支持 OpenAI 和 Anthropic 两种协议
       env.ANTHROPIC_API_KEY = apiKey;
+      env.OPENAI_API_KEY = apiKey;
     }
-    if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl;
+    if (baseUrl) {
+      env.ANTHROPIC_BASE_URL = baseUrl;
+      env.OPENAI_BASE_URL = baseUrl;
+    }
     if (primaryModel) env.ANTHROPIC_MODEL = primaryModel;
     if (haikuModel) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
     if (sonnetModel) env.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnetModel;
