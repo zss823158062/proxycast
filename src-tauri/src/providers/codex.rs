@@ -77,8 +77,7 @@ pub struct CodexCredentials {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        rename = "expired",
-        alias = "expires_at",
+        alias = "expired",
         alias = "expiresAt"
     )]
     pub expires_at: Option<String>,

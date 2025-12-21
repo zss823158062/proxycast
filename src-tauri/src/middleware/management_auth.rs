@@ -30,11 +30,15 @@ use tower::{Layer, Service};
 const MAX_AUTH_FAILURES: u32 = 5;
 const FAILURE_WINDOW_SECS: u64 = 60;
 const BLOCK_SECS: u64 = 300;
+// 安全修复：限制 failure_map 最大条目数，防止内存 DoS
+const MAX_FAILURE_ENTRIES: usize = 10000;
+const ENTRY_EXPIRE_SECS: u64 = 3600;
 
 struct FailureState {
     count: u32,
     window_start: Instant,
     blocked_until: Option<Instant>,
+    last_access: Instant,
 }
 
 fn failure_map() -> &'static Mutex<std::collections::HashMap<String, FailureState>> {
@@ -125,15 +129,10 @@ impl<S> ManagementAuthService<S> {
     }
 
     fn get_client_id(req: &Request<Body>) -> String {
+        // 安全修复：只使用真实的连接地址，不信任 X-Forwarded-For
+        // X-Forwarded-For 可被伪造，用于绕过限速或导致 failure_map 无界增长
         if let Some(addr) = Self::get_client_addr(req) {
             return addr.ip().to_string();
-        }
-        if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-            if let Ok(value) = forwarded.to_str() {
-                if let Some(first) = value.split(',').next() {
-                    return first.trim().to_string();
-                }
-            }
         }
         "unknown".to_string()
     }
@@ -142,6 +141,7 @@ impl<S> ManagementAuthService<S> {
         let now = Instant::now();
         let mut map = failure_map().lock().unwrap();
         if let Some(state) = map.get_mut(client_id) {
+            state.last_access = now;
             if let Some(blocked_until) = state.blocked_until {
                 if blocked_until > now {
                     return false;
@@ -161,11 +161,21 @@ impl<S> ManagementAuthService<S> {
     fn record_failure(client_id: &str) {
         let now = Instant::now();
         let mut map = failure_map().lock().unwrap();
+
+        // 安全修复：容量保护，超过上限时清理长时间未访问的条目
+        if map.len() > MAX_FAILURE_ENTRIES {
+            map.retain(|_, state| {
+                now.duration_since(state.last_access).as_secs() <= ENTRY_EXPIRE_SECS
+            });
+        }
+
         let entry = map.entry(client_id.to_string()).or_insert(FailureState {
             count: 0,
             window_start: now,
             blocked_until: None,
+            last_access: now,
         });
+        entry.last_access = now;
 
         if now.duration_since(entry.window_start).as_secs() > FAILURE_WINDOW_SECS {
             entry.count = 0;

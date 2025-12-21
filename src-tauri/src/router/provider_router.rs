@@ -101,22 +101,16 @@ impl ProviderRouter {
             // /{selector}/v1/messages
             [selector, "v1", "messages"] => {
                 let registry = self.registry.read().await;
-                let route = registry
-                    .find_by_selector(selector)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        // 创建一个临时的选择器路由
-                        RegisteredRoute {
-                            path_pattern: format!("/{}/v1/messages", selector),
-                            route_type: RouteType::CredentialSelector,
-                            provider_type: None,
-                            credential_uuid: None,
-                            credential_name: Some(selector.to_string()),
-                            protocols: vec!["claude".to_string()],
-                            enabled: true,
-                            priority: 50,
-                        }
-                    });
+                let route = registry.find_by_selector(selector).cloned();
+
+                // 安全修复：未注册的 selector 不创建临时路由，直接返回 None
+                let route = match route {
+                    Some(r) => r,
+                    None => {
+                        tracing::warn!("[ROUTER] 未注册的 selector: {}，拒绝请求", selector);
+                        return None;
+                    }
+                };
 
                 Some(RouteMatch {
                     route,
@@ -128,19 +122,16 @@ impl ProviderRouter {
             // /{selector}/v1/chat/completions
             [selector, "v1", "chat", "completions"] => {
                 let registry = self.registry.read().await;
-                let route = registry
-                    .find_by_selector(selector)
-                    .cloned()
-                    .unwrap_or_else(|| RegisteredRoute {
-                        path_pattern: format!("/{}/v1/chat/completions", selector),
-                        route_type: RouteType::CredentialSelector,
-                        provider_type: None,
-                        credential_uuid: None,
-                        credential_name: Some(selector.to_string()),
-                        protocols: vec!["openai".to_string()],
-                        enabled: true,
-                        priority: 50,
-                    });
+                let route = registry.find_by_selector(selector).cloned();
+
+                // 安全修复：未注册的 selector 不创建临时路由，直接返回 None
+                let route = match route {
+                    Some(r) => r,
+                    None => {
+                        tracing::warn!("[ROUTER] 未注册的 selector: {}，拒绝请求", selector);
+                        return None;
+                    }
+                };
 
                 Some(RouteMatch {
                     route,

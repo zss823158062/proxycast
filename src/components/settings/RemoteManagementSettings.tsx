@@ -70,12 +70,14 @@ export function RemoteManagementSettings() {
   };
 
   const generateSecretKey = () => {
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let key = "";
-    for (let i = 0; i < 32; i++) {
-      key += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    // 安全修复：使用 WebCrypto API 生成安全随机密钥
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    // 转换为 base64url 格式（URL 安全的 base64）
+    const key = btoa(String.fromCharCode(...array))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=/g, "");
     updateRemoteManagement({ secret_key: key });
   };
 
