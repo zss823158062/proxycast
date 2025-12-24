@@ -12,3 +12,6 @@ export * from "./ClaudeOAuthForm";
 export * from "./QwenForm";
 export * from "./IFlowForm";
 export * from "./GeminiForm";
+export * from "./BrowserModeSelector";
+export * from "./PlaywrightInstallGuide";
+export * from "./PlaywrightErrorDisplay";

@@ -218,6 +218,7 @@ fn arb_config() -> impl Strategy<Value = Config> {
             proxy_url: None,
             ampcode: crate::config::AmpConfig::default(),
             endpoint_providers: crate::config::EndpointProvidersConfig::default(),
+            minimize_to_tray: true,
         })
 }
 
@@ -490,6 +491,7 @@ fn arb_valid_config() -> impl Strategy<Value = Config> {
             proxy_url: None,
             ampcode: crate::config::AmpConfig::default(),
             endpoint_providers: crate::config::EndpointProvidersConfig::default(),
+            minimize_to_tray: true,
         })
 }
 
@@ -534,6 +536,7 @@ fn arb_invalid_config() -> impl Strategy<Value = Config> {
                     proxy_url: None,
                     ampcode: crate::config::AmpConfig::default(),
                     endpoint_providers: crate::config::EndpointProvidersConfig::default(),
+                    minimize_to_tray: true,
                 };
                 // 根据类型使配置无效
                 match invalid_type {

@@ -96,3 +96,7 @@ Kiro 凭证采用完全独立的副本策略：
 - 日志输出使用 `tracing` 宏
 - API 请求调试文件保存在 `~/.proxycast/logs/`
 - 使用 `debug_kiro_credentials` 命令调试凭证加载
+
+## 文档维护
+
+文档维护规范详见 `.kiro/steering/doc-maintenance.md`（Kiro 自动加载）。

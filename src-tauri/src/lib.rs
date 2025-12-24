@@ -1952,6 +1952,7 @@ pub fn run() {
             commands::provider_pool_cmd::check_provider_pool_credential_health,
             commands::provider_pool_cmd::check_provider_pool_type_health,
             commands::provider_pool_cmd::add_kiro_oauth_credential,
+            commands::provider_pool_cmd::add_kiro_from_json,
             commands::provider_pool_cmd::add_gemini_oauth_credential,
             commands::provider_pool_cmd::add_qwen_oauth_credential,
             commands::provider_pool_cmd::add_antigravity_oauth_credential,
@@ -1980,6 +1981,21 @@ pub fn run() {
             commands::provider_pool_cmd::start_gemini_oauth_login,
             commands::provider_pool_cmd::exchange_gemini_code,
             commands::provider_pool_cmd::get_kiro_credential_fingerprint,
+            // Kiro Builder ID 登录命令
+            commands::provider_pool_cmd::start_kiro_builder_id_login,
+            commands::provider_pool_cmd::poll_kiro_builder_id_auth,
+            commands::provider_pool_cmd::cancel_kiro_builder_id_login,
+            commands::provider_pool_cmd::add_kiro_from_builder_id_auth,
+            // Kiro Social Auth 登录命令 (Google/GitHub)
+            commands::provider_pool_cmd::start_kiro_social_auth_login,
+            commands::provider_pool_cmd::exchange_kiro_social_auth_token,
+            commands::provider_pool_cmd::cancel_kiro_social_auth_login,
+            commands::provider_pool_cmd::start_kiro_social_auth_callback_server,
+            // Playwright 指纹浏览器登录命令
+            commands::provider_pool_cmd::check_playwright_available,
+            commands::provider_pool_cmd::install_playwright,
+            commands::provider_pool_cmd::start_kiro_playwright_login,
+            commands::provider_pool_cmd::cancel_kiro_playwright_login,
             // Route commands
             commands::route_cmd::get_available_routes,
             commands::route_cmd::get_route_curl_examples,

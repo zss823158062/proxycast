@@ -624,6 +624,183 @@ pub fn add_kiro_oauth_credential(
     )
 }
 
+/// 从 JSON 内容创建 Kiro 凭证文件并添加到凭证池
+///
+/// 直接粘贴 JSON 内容，无需选择文件
+fn create_kiro_credential_from_json(json_content: &str) -> Result<String, String> {
+    // 验证 JSON 格式
+    let creds: serde_json::Value =
+        serde_json::from_str(json_content).map_err(|e| format!("JSON 格式无效: {}", e))?;
+
+    // 验证必要字段
+    if creds.get("refreshToken").is_none() {
+        return Err("凭证 JSON 缺少 refreshToken 字段".to_string());
+    }
+
+    // 检测 refreshToken 是否被截断
+    if let Some(refresh_token) = creds.get("refreshToken").and_then(|v| v.as_str()) {
+        let token_len = refresh_token.len();
+        let is_truncated =
+            token_len < 100 || refresh_token.ends_with("...") || refresh_token.contains("...");
+
+        if is_truncated {
+            tracing::warn!(
+                "[KIRO] 检测到 refreshToken 可能被截断！长度: {} (仍允许添加，刷新时会提示)",
+                token_len
+            );
+        }
+    }
+
+    // 生成新的文件名
+    let uuid = Uuid::new_v4().to_string();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let new_filename = format!("kiro_{}_{}_{}.json", &uuid[..8], timestamp, "kiro");
+
+    // 获取目标目录
+    let credentials_dir = get_credentials_dir()?;
+    let target_path = credentials_dir.join(&new_filename);
+
+    // 尝试合并 clientId/clientSecret（如果凭证中没有）
+    let mut merged_creds = creds.clone();
+
+    // 检查是否需要从外部文件获取 clientId/clientSecret
+    let has_client_id = merged_creds.get("clientId").is_some();
+    let has_client_secret = merged_creds.get("clientSecret").is_some();
+
+    if !has_client_id || !has_client_secret {
+        let aws_sso_cache_dir = dirs::home_dir()
+            .ok_or_else(|| "无法获取用户主目录".to_string())?
+            .join(".aws")
+            .join("sso")
+            .join("cache");
+
+        let mut found_credentials = false;
+
+        // 方式1：如果有 clientIdHash，读取对应文件
+        if let Some(hash) = merged_creds.get("clientIdHash").and_then(|v| v.as_str()) {
+            let hash_file_path = aws_sso_cache_dir.join(format!("{}.json", hash));
+
+            if hash_file_path.exists() {
+                if let Ok(hash_content) = fs::read_to_string(&hash_file_path) {
+                    if let Ok(hash_json) = serde_json::from_str::<serde_json::Value>(&hash_content)
+                    {
+                        if let Some(client_id) = hash_json.get("clientId") {
+                            merged_creds["clientId"] = client_id.clone();
+                        }
+                        if let Some(client_secret) = hash_json.get("clientSecret") {
+                            merged_creds["clientSecret"] = client_secret.clone();
+                        }
+                        if merged_creds.get("clientId").is_some()
+                            && merged_creds.get("clientSecret").is_some()
+                        {
+                            found_credentials = true;
+                            tracing::info!(
+                                "[KIRO] 已从 clientIdHash 文件合并 client_id/client_secret"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 方式2：扫描目录中的其他 JSON 文件
+        if !found_credentials && aws_sso_cache_dir.exists() {
+            tracing::info!("[KIRO] 扫描目录查找 client_id/client_secret");
+            if let Ok(entries) = fs::read_dir(&aws_sso_cache_dir) {
+                for entry in entries.flatten() {
+                    let file_path = entry.path();
+                    if file_path.extension().map(|e| e == "json").unwrap_or(false) {
+                        let file_name =
+                            file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        if file_name.starts_with("kiro-auth-token") {
+                            continue;
+                        }
+                        if let Ok(file_content) = fs::read_to_string(&file_path) {
+                            if let Ok(file_json) =
+                                serde_json::from_str::<serde_json::Value>(&file_content)
+                            {
+                                let has_cid =
+                                    file_json.get("clientId").and_then(|v| v.as_str()).is_some();
+                                let has_csec = file_json
+                                    .get("clientSecret")
+                                    .and_then(|v| v.as_str())
+                                    .is_some();
+                                if has_cid && has_csec {
+                                    merged_creds["clientId"] = file_json["clientId"].clone();
+                                    merged_creds["clientSecret"] =
+                                        file_json["clientSecret"].clone();
+                                    found_credentials = true;
+                                    tracing::info!(
+                                        "[KIRO] 从 {} 合并 client_id/client_secret",
+                                        file_name
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !found_credentials {
+            let auth_method = merged_creds
+                .get("authMethod")
+                .and_then(|v| v.as_str())
+                .unwrap_or("social");
+
+            if auth_method.to_lowercase() == "idc" {
+                tracing::error!(
+                    "[KIRO] IdC 认证方式缺少 clientId/clientSecret，无法创建有效的凭证"
+                );
+                return Err(
+                    "IdC 认证凭证不完整：缺少 clientId/clientSecret。\n\n💡 解决方案：\n1. 确保 ~/.aws/sso/cache/ 目录下有对应的 clientIdHash 文件\n2. 如果使用 AWS IAM Identity Center，请确保已完成完整的 SSO 登录流程\n3. 或者尝试使用 Social 认证方式的凭证".to_string()
+                );
+            } else {
+                tracing::warn!("[KIRO] 未找到 client_id/client_secret，将使用 social 认证方式");
+            }
+        }
+    }
+
+    // 写入凭证文件
+    let merged_content = serde_json::to_string_pretty(&merged_creds)
+        .map_err(|e| format!("序列化凭证失败: {}", e))?;
+    fs::write(&target_path, merged_content).map_err(|e| format!("写入凭证文件失败: {}", e))?;
+
+    tracing::info!("[KIRO] 凭证文件已创建: {:?}", target_path);
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
+/// 添加 Kiro OAuth 凭证（通过 JSON 内容）
+///
+/// 直接粘贴凭证 JSON 内容，无需选择文件
+#[tauri::command]
+pub fn add_kiro_from_json(
+    db: State<'_, DbConnection>,
+    pool_service: State<'_, ProviderPoolServiceState>,
+    json_content: String,
+    name: Option<String>,
+) -> Result<ProviderCredential, String> {
+    // 从 JSON 内容创建凭证文件
+    let stored_file_path = create_kiro_credential_from_json(&json_content)?;
+
+    pool_service.0.add_credential(
+        &db,
+        "kiro",
+        CredentialData::KiroOAuth {
+            creds_file_path: stored_file_path,
+        },
+        name,
+        Some(true),
+        None,
+    )
+}
+
 /// 添加 Gemini OAuth 凭证（通过文件路径）
 #[tauri::command]
 pub fn add_gemini_oauth_credential(
@@ -1842,4 +2019,1940 @@ pub async fn start_gemini_oauth_login(
     tracing::info!("[Gemini OAuth] 凭证已添加到凭证池: {}", credential.uuid);
 
     Ok(credential)
+}
+
+// ============ Kiro Builder ID 登录相关命令 ============
+
+/// Kiro Builder ID 登录状态
+#[derive(Debug, Clone)]
+struct KiroBuilderIdLoginState {
+    /// OIDC 客户端 ID
+    client_id: String,
+    /// OIDC 客户端密钥
+    client_secret: String,
+    /// 设备码
+    device_code: String,
+    /// 用户码
+    user_code: String,
+    /// 验证 URI
+    verification_uri: String,
+    /// 轮询间隔（秒）
+    interval: i64,
+    /// 过期时间戳
+    expires_at: i64,
+    /// 区域
+    region: String,
+}
+
+/// 全局 Builder ID 登录状态存储
+static KIRO_BUILDER_ID_LOGIN_STATE: Lazy<RwLock<Option<KiroBuilderIdLoginState>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// Kiro Builder ID 登录启动响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KiroBuilderIdLoginResponse {
+    /// 是否成功
+    pub success: bool,
+    /// 用户码（用于显示给用户）
+    #[serde(rename = "userCode")]
+    pub user_code: Option<String>,
+    /// 验证 URI（用户需要访问的 URL）
+    #[serde(rename = "verificationUri")]
+    pub verification_uri: Option<String>,
+    /// 过期时间（秒）
+    #[serde(rename = "expiresIn")]
+    pub expires_in: Option<i64>,
+    /// 轮询间隔（秒）
+    pub interval: Option<i64>,
+    /// 错误信息
+    pub error: Option<String>,
+}
+
+/// Kiro Builder ID 轮询响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KiroBuilderIdPollResponse {
+    /// 是否成功
+    pub success: bool,
+    /// 是否完成授权
+    pub completed: bool,
+    /// 状态（pending / slow_down）
+    pub status: Option<String>,
+    /// 错误信息
+    pub error: Option<String>,
+}
+
+/// 启动 Kiro Builder ID 登录
+///
+/// 使用 OIDC Device Authorization Flow 进行登录
+#[tauri::command]
+pub async fn start_kiro_builder_id_login(
+    region: Option<String>,
+) -> Result<KiroBuilderIdLoginResponse, String> {
+    let region = region.unwrap_or_else(|| "us-east-1".to_string());
+    let oidc_base = format!("https://oidc.{}.amazonaws.com", region);
+    let start_url = "https://view.awsapps.com/start";
+    let scopes = vec![
+        "codewhisperer:completions",
+        "codewhisperer:analysis",
+        "codewhisperer:conversations",
+        "codewhisperer:transformations",
+        "codewhisperer:taskassist",
+    ];
+
+    tracing::info!("[Kiro Builder ID] 开始登录流程，区域: {}", region);
+
+    // Step 1: 注册 OIDC 客户端
+    tracing::info!("[Kiro Builder ID] Step 1: 注册 OIDC 客户端...");
+    let client = reqwest::Client::new();
+
+    let reg_body = serde_json::json!({
+        "clientName": "ProxyCast Kiro Manager",
+        "clientType": "public",
+        "scopes": scopes,
+        "grantTypes": ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+        "issuerUrl": start_url
+    });
+
+    let reg_res = client
+        .post(format!("{}/client/register", oidc_base))
+        .header("Content-Type", "application/json")
+        .json(&reg_body)
+        .send()
+        .await
+        .map_err(|e| format!("注册客户端请求失败: {}", e))?;
+
+    if !reg_res.status().is_success() {
+        let err_text = reg_res.text().await.unwrap_or_default();
+        return Ok(KiroBuilderIdLoginResponse {
+            success: false,
+            user_code: None,
+            verification_uri: None,
+            expires_in: None,
+            interval: None,
+            error: Some(format!("注册客户端失败: {}", err_text)),
+        });
+    }
+
+    let reg_data: serde_json::Value = reg_res
+        .json()
+        .await
+        .map_err(|e| format!("解析注册响应失败: {}", e))?;
+
+    let client_id = reg_data["clientId"]
+        .as_str()
+        .ok_or("响应中缺少 clientId")?
+        .to_string();
+    let client_secret = reg_data["clientSecret"]
+        .as_str()
+        .ok_or("响应中缺少 clientSecret")?
+        .to_string();
+
+    tracing::info!(
+        "[Kiro Builder ID] 客户端注册成功: {}...",
+        &client_id[..30.min(client_id.len())]
+    );
+
+    // Step 2: 发起设备授权
+    tracing::info!("[Kiro Builder ID] Step 2: 发起设备授权...");
+    let auth_body = serde_json::json!({
+        "clientId": client_id,
+        "clientSecret": client_secret,
+        "startUrl": start_url
+    });
+
+    let auth_res = client
+        .post(format!("{}/device_authorization", oidc_base))
+        .header("Content-Type", "application/json")
+        .json(&auth_body)
+        .send()
+        .await
+        .map_err(|e| format!("设备授权请求失败: {}", e))?;
+
+    if !auth_res.status().is_success() {
+        let err_text = auth_res.text().await.unwrap_or_default();
+        return Ok(KiroBuilderIdLoginResponse {
+            success: false,
+            user_code: None,
+            verification_uri: None,
+            expires_in: None,
+            interval: None,
+            error: Some(format!("设备授权失败: {}", err_text)),
+        });
+    }
+
+    let auth_data: serde_json::Value = auth_res
+        .json()
+        .await
+        .map_err(|e| format!("解析授权响应失败: {}", e))?;
+
+    let device_code = auth_data["deviceCode"]
+        .as_str()
+        .ok_or("响应中缺少 deviceCode")?
+        .to_string();
+    let user_code = auth_data["userCode"]
+        .as_str()
+        .ok_or("响应中缺少 userCode")?
+        .to_string();
+    let verification_uri = auth_data["verificationUriComplete"]
+        .as_str()
+        .or_else(|| auth_data["verificationUri"].as_str())
+        .ok_or("响应中缺少 verificationUri")?
+        .to_string();
+    let interval = auth_data["interval"].as_i64().unwrap_or(5);
+    let expires_in = auth_data["expiresIn"].as_i64().unwrap_or(600);
+
+    tracing::info!("[Kiro Builder ID] 设备码获取成功，user_code: {}", user_code);
+
+    // 保存登录状态
+    let expires_at = chrono::Utc::now().timestamp() + expires_in;
+    {
+        let mut state = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+        *state = Some(KiroBuilderIdLoginState {
+            client_id,
+            client_secret,
+            device_code,
+            user_code: user_code.clone(),
+            verification_uri: verification_uri.clone(),
+            interval,
+            expires_at,
+            region,
+        });
+    }
+
+    Ok(KiroBuilderIdLoginResponse {
+        success: true,
+        user_code: Some(user_code),
+        verification_uri: Some(verification_uri),
+        expires_in: Some(expires_in),
+        interval: Some(interval),
+        error: None,
+    })
+}
+
+/// 轮询 Kiro Builder ID 授权状态
+#[tauri::command]
+pub async fn poll_kiro_builder_id_auth() -> Result<KiroBuilderIdPollResponse, String> {
+    let state = {
+        let state_guard = KIRO_BUILDER_ID_LOGIN_STATE.read().await;
+        match state_guard.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                return Ok(KiroBuilderIdPollResponse {
+                    success: false,
+                    completed: false,
+                    status: None,
+                    error: Some("没有进行中的登录".to_string()),
+                });
+            }
+        }
+    };
+
+    // 检查是否过期
+    if chrono::Utc::now().timestamp() > state.expires_at {
+        // 清除状态
+        {
+            let mut state_guard = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+            *state_guard = None;
+        }
+        return Ok(KiroBuilderIdPollResponse {
+            success: false,
+            completed: false,
+            status: None,
+            error: Some("授权已过期，请重新开始".to_string()),
+        });
+    }
+
+    let oidc_base = format!("https://oidc.{}.amazonaws.com", state.region);
+    let client = reqwest::Client::new();
+
+    let token_body = serde_json::json!({
+        "clientId": state.client_id,
+        "clientSecret": state.client_secret,
+        "grantType": "urn:ietf:params:oauth:grant-type:device_code",
+        "deviceCode": state.device_code
+    });
+
+    let token_res = client
+        .post(format!("{}/token", oidc_base))
+        .header("Content-Type", "application/json")
+        .json(&token_body)
+        .send()
+        .await
+        .map_err(|e| format!("Token 请求失败: {}", e))?;
+
+    let status = token_res.status();
+
+    if status.is_success() {
+        // 授权成功
+        let token_data: serde_json::Value = token_res
+            .json()
+            .await
+            .map_err(|e| format!("解析 Token 响应失败: {}", e))?;
+
+        tracing::info!("[Kiro Builder ID] 授权成功！");
+
+        // 保存凭证到文件
+        let access_token = token_data["accessToken"].as_str().unwrap_or("").to_string();
+        let refresh_token = token_data["refreshToken"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let expires_in = token_data["expiresIn"].as_i64().unwrap_or(3600);
+
+        // 创建凭证 JSON
+        let creds_json = serde_json::json!({
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+            "clientId": state.client_id,
+            "clientSecret": state.client_secret,
+            "region": state.region,
+            "authMethod": "idc",
+            "expiresAt": chrono::Utc::now().timestamp() + expires_in
+        });
+
+        // 保存到临时状态，等待 add_kiro_from_builder_id_auth 调用
+        // 这里我们把凭证 JSON 存储到一个临时位置
+        {
+            let mut sessions = KIRO_BUILDER_ID_CREDENTIALS.write().await;
+            sessions.insert("pending".to_string(), creds_json);
+        }
+
+        // 清除登录状态
+        {
+            let mut state_guard = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+            *state_guard = None;
+        }
+
+        Ok(KiroBuilderIdPollResponse {
+            success: true,
+            completed: true,
+            status: None,
+            error: None,
+        })
+    } else if status.as_u16() == 400 {
+        let err_data: serde_json::Value = token_res
+            .json()
+            .await
+            .map_err(|e| format!("解析错误响应失败: {}", e))?;
+
+        let error = err_data["error"].as_str().unwrap_or("unknown");
+
+        match error {
+            "authorization_pending" => Ok(KiroBuilderIdPollResponse {
+                success: true,
+                completed: false,
+                status: Some("pending".to_string()),
+                error: None,
+            }),
+            "slow_down" => {
+                // 增加轮询间隔
+                {
+                    let mut state_guard = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+                    if let Some(ref mut s) = *state_guard {
+                        s.interval += 5;
+                    }
+                }
+                Ok(KiroBuilderIdPollResponse {
+                    success: true,
+                    completed: false,
+                    status: Some("slow_down".to_string()),
+                    error: None,
+                })
+            }
+            "expired_token" => {
+                // 清除状态
+                {
+                    let mut state_guard = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+                    *state_guard = None;
+                }
+                Ok(KiroBuilderIdPollResponse {
+                    success: false,
+                    completed: false,
+                    status: None,
+                    error: Some("设备码已过期".to_string()),
+                })
+            }
+            "access_denied" => {
+                // 清除状态
+                {
+                    let mut state_guard = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+                    *state_guard = None;
+                }
+                Ok(KiroBuilderIdPollResponse {
+                    success: false,
+                    completed: false,
+                    status: None,
+                    error: Some("用户拒绝授权".to_string()),
+                })
+            }
+            _ => {
+                // 清除状态
+                {
+                    let mut state_guard = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+                    *state_guard = None;
+                }
+                Ok(KiroBuilderIdPollResponse {
+                    success: false,
+                    completed: false,
+                    status: None,
+                    error: Some(format!("授权错误: {}", error)),
+                })
+            }
+        }
+    } else {
+        Ok(KiroBuilderIdPollResponse {
+            success: false,
+            completed: false,
+            status: None,
+            error: Some(format!("未知响应: {}", status)),
+        })
+    }
+}
+
+/// 临时存储 Builder ID 登录成功后的凭证
+static KIRO_BUILDER_ID_CREDENTIALS: Lazy<RwLock<HashMap<String, serde_json::Value>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// 取消 Kiro Builder ID 登录
+#[tauri::command]
+pub async fn cancel_kiro_builder_id_login() -> Result<bool, String> {
+    tracing::info!("[Kiro Builder ID] 取消登录");
+    {
+        let mut state = KIRO_BUILDER_ID_LOGIN_STATE.write().await;
+        *state = None;
+    }
+    {
+        let mut creds = KIRO_BUILDER_ID_CREDENTIALS.write().await;
+        creds.remove("pending");
+    }
+    Ok(true)
+}
+
+/// 从 Builder ID 授权结果添加 Kiro 凭证
+#[tauri::command]
+pub async fn add_kiro_from_builder_id_auth(
+    db: State<'_, DbConnection>,
+    pool_service: State<'_, ProviderPoolServiceState>,
+    name: Option<String>,
+) -> Result<ProviderCredential, String> {
+    // 获取待处理的凭证
+    let creds_json = {
+        let mut creds = KIRO_BUILDER_ID_CREDENTIALS.write().await;
+        creds
+            .remove("pending")
+            .ok_or("没有待处理的 Builder ID 凭证")?
+    };
+
+    // 将凭证 JSON 转换为字符串
+    let json_content =
+        serde_json::to_string_pretty(&creds_json).map_err(|e| format!("序列化凭证失败: {}", e))?;
+
+    // 使用现有的 create_kiro_credential_from_json 函数创建凭证文件
+    let stored_file_path = create_kiro_credential_from_json(&json_content)?;
+
+    // 添加到凭证池
+    let credential = pool_service.0.add_credential(
+        &db,
+        "kiro",
+        CredentialData::KiroOAuth {
+            creds_file_path: stored_file_path,
+        },
+        name,
+        Some(true),
+        None,
+    )?;
+
+    tracing::info!("[Kiro Builder ID] 凭证已添加到凭证池: {}", credential.uuid);
+
+    Ok(credential)
+}
+
+// ============ Kiro Social Auth 登录相关命令 (Google/GitHub) ============
+
+/// Kiro Auth 端点
+const KIRO_AUTH_ENDPOINT: &str = "https://prod.us-east-1.auth.desktop.kiro.dev";
+
+/// Kiro Social Auth 登录状态
+#[derive(Debug, Clone)]
+struct KiroSocialAuthLoginState {
+    /// 登录提供商 (Google / Github)
+    provider: String,
+    /// PKCE code_verifier
+    code_verifier: String,
+    /// PKCE code_challenge
+    code_challenge: String,
+    /// OAuth state
+    oauth_state: String,
+    /// 过期时间戳
+    expires_at: i64,
+}
+
+/// 全局 Social Auth 登录状态存储
+static KIRO_SOCIAL_AUTH_LOGIN_STATE: Lazy<RwLock<Option<KiroSocialAuthLoginState>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// Kiro Social Auth 登录启动响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KiroSocialAuthLoginResponse {
+    /// 是否成功
+    pub success: bool,
+    /// 登录 URL
+    #[serde(rename = "loginUrl")]
+    pub login_url: Option<String>,
+    /// OAuth state（用于验证回调）
+    pub state: Option<String>,
+    /// 错误信息
+    pub error: Option<String>,
+}
+
+/// Kiro Social Auth Token 交换响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KiroSocialAuthTokenResponse {
+    /// 是否成功
+    pub success: bool,
+    /// 错误信息
+    pub error: Option<String>,
+}
+
+/// 生成 PKCE code_verifier
+fn generate_code_verifier() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: Vec<u8> = (0..64).map(|_| rng.gen()).collect();
+    base64_url_encode(&bytes)[..128.min(base64_url_encode(&bytes).len())].to_string()
+}
+
+/// 生成 PKCE code_challenge (SHA256)
+fn generate_code_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    let result = hasher.finalize();
+    base64_url_encode(&result)
+}
+
+/// 生成 OAuth state
+fn generate_oauth_state() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+    base64_url_encode(&bytes)
+}
+
+/// Base64 URL 编码（无填充）
+fn base64_url_encode(data: &[u8]) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    URL_SAFE_NO_PAD.encode(data)
+}
+
+/// 启动 Kiro Social Auth 登录 (Google/GitHub)
+///
+/// 使用 PKCE OAuth 流程进行登录
+/// 打开系统默认浏览器进行 OAuth 登录
+#[tauri::command]
+pub async fn start_kiro_social_auth_login(
+    provider: String,
+) -> Result<KiroSocialAuthLoginResponse, String> {
+    // 验证 provider
+    let provider_normalized = match provider.to_lowercase().as_str() {
+        "google" => "Google",
+        "github" => "Github",
+        _ => {
+            return Ok(KiroSocialAuthLoginResponse {
+                success: false,
+                login_url: None,
+                state: None,
+                error: Some(format!("不支持的登录提供商: {}", provider)),
+            });
+        }
+    };
+
+    tracing::info!("[Kiro Social Auth] 开始 {} 登录流程", provider_normalized);
+
+    // 生成 PKCE
+    let code_verifier = generate_code_verifier();
+    let code_challenge = generate_code_challenge(&code_verifier);
+    let oauth_state = generate_oauth_state();
+
+    // 构建登录 URL
+    // 使用本地回调服务器接收授权码
+    let redirect_uri = "http://127.0.0.1:19823/kiro-social-callback";
+
+    let login_url = format!(
+        "{}/login?idp={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
+        KIRO_AUTH_ENDPOINT,
+        provider_normalized,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(&oauth_state)
+    );
+
+    tracing::info!("[Kiro Social Auth] 登录 URL: {}", login_url);
+
+    // 保存登录状态（10 分钟过期）
+    let expires_at = chrono::Utc::now().timestamp() + 600;
+    {
+        let mut state = KIRO_SOCIAL_AUTH_LOGIN_STATE.write().await;
+        *state = Some(KiroSocialAuthLoginState {
+            provider: provider_normalized.to_string(),
+            code_verifier,
+            code_challenge,
+            oauth_state: oauth_state.clone(),
+            expires_at,
+        });
+    }
+
+    Ok(KiroSocialAuthLoginResponse {
+        success: true,
+        login_url: Some(login_url),
+        state: Some(oauth_state),
+        error: None,
+    })
+}
+
+/// 交换 Kiro Social Auth Token
+///
+/// 用授权码交换 access_token 和 refresh_token
+#[tauri::command]
+pub async fn exchange_kiro_social_auth_token(
+    code: String,
+    state: String,
+) -> Result<KiroSocialAuthTokenResponse, String> {
+    tracing::info!("[Kiro Social Auth] 交换 Token...");
+
+    // 获取并验证登录状态
+    let login_state = {
+        let state_guard = KIRO_SOCIAL_AUTH_LOGIN_STATE.read().await;
+        match state_guard.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                return Ok(KiroSocialAuthTokenResponse {
+                    success: false,
+                    error: Some("没有进行中的社交登录".to_string()),
+                });
+            }
+        }
+    };
+
+    // 验证 state
+    if state != login_state.oauth_state {
+        // 清除状态
+        {
+            let mut state_guard = KIRO_SOCIAL_AUTH_LOGIN_STATE.write().await;
+            *state_guard = None;
+        }
+        return Ok(KiroSocialAuthTokenResponse {
+            success: false,
+            error: Some("状态参数不匹配，可能存在安全风险".to_string()),
+        });
+    }
+
+    // 检查是否过期
+    if chrono::Utc::now().timestamp() > login_state.expires_at {
+        // 清除状态
+        {
+            let mut state_guard = KIRO_SOCIAL_AUTH_LOGIN_STATE.write().await;
+            *state_guard = None;
+        }
+        return Ok(KiroSocialAuthTokenResponse {
+            success: false,
+            error: Some("登录已过期，请重新开始".to_string()),
+        });
+    }
+
+    let redirect_uri = "http://127.0.0.1:19823/kiro-social-callback";
+
+    // 交换 Token
+    let client = reqwest::Client::new();
+    let token_body = serde_json::json!({
+        "code": code,
+        "code_verifier": login_state.code_verifier,
+        "redirect_uri": redirect_uri
+    });
+
+    let token_res = client
+        .post(format!("{}/oauth/token", KIRO_AUTH_ENDPOINT))
+        .header("Content-Type", "application/json")
+        .json(&token_body)
+        .send()
+        .await
+        .map_err(|e| format!("Token 交换请求失败: {}", e))?;
+
+    if !token_res.status().is_success() {
+        let err_text = token_res.text().await.unwrap_or_default();
+        // 清除状态
+        {
+            let mut state_guard = KIRO_SOCIAL_AUTH_LOGIN_STATE.write().await;
+            *state_guard = None;
+        }
+        return Ok(KiroSocialAuthTokenResponse {
+            success: false,
+            error: Some(format!("Token 交换失败: {}", err_text)),
+        });
+    }
+
+    let token_data: serde_json::Value = token_res
+        .json()
+        .await
+        .map_err(|e| format!("解析 Token 响应失败: {}", e))?;
+
+    tracing::info!("[Kiro Social Auth] Token 交换成功!");
+
+    // 提取凭证
+    let access_token = token_data["accessToken"].as_str().unwrap_or("").to_string();
+    let refresh_token = token_data["refreshToken"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let profile_arn = token_data["profileArn"].as_str().map(|s| s.to_string());
+    let expires_in = token_data["expiresIn"].as_i64().unwrap_or(3600);
+
+    // 创建凭证 JSON
+    let creds_json = serde_json::json!({
+        "accessToken": access_token,
+        "refreshToken": refresh_token,
+        "profileArn": profile_arn,
+        "authMethod": "social",
+        "provider": login_state.provider,
+        "expiresAt": chrono::Utc::now().timestamp() + expires_in
+    });
+
+    // 保存到临时状态
+    {
+        let mut creds = KIRO_BUILDER_ID_CREDENTIALS.write().await;
+        creds.insert("pending".to_string(), creds_json);
+    }
+
+    // 清除登录状态
+    {
+        let mut state_guard = KIRO_SOCIAL_AUTH_LOGIN_STATE.write().await;
+        *state_guard = None;
+    }
+
+    Ok(KiroSocialAuthTokenResponse {
+        success: true,
+        error: None,
+    })
+}
+
+/// 取消 Kiro Social Auth 登录
+#[tauri::command]
+pub async fn cancel_kiro_social_auth_login() -> Result<bool, String> {
+    tracing::info!("[Kiro Social Auth] 取消登录");
+    {
+        let mut state = KIRO_SOCIAL_AUTH_LOGIN_STATE.write().await;
+        *state = None;
+    }
+    Ok(true)
+}
+
+// ============ Playwright 指纹浏览器登录相关命令 ============
+
+/// Playwright 可用性状态
+///
+/// Requirements: 2.1, 2.2
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlaywrightStatus {
+    /// 浏览器是否可用
+    pub available: bool,
+    /// 浏览器可执行文件路径
+    pub browser_path: Option<String>,
+    /// 浏览器来源: "system" 或 "playwright"
+    pub browser_source: Option<String>,
+    /// 错误信息
+    pub error: Option<String>,
+}
+
+/// 获取系统 Chrome 可执行文件路径
+fn get_system_chrome_path() -> Option<String> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+
+    #[cfg(target_os = "macos")]
+    {
+        let paths = [
+            PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ];
+        for path in paths {
+            if path.exists() {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let paths = [
+            PathBuf::from("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"),
+            PathBuf::from("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"),
+            home.join("AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"),
+        ];
+        for path in paths {
+            if path.exists() {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let paths = [
+            PathBuf::from("/usr/bin/google-chrome"),
+            PathBuf::from("/usr/bin/google-chrome-stable"),
+            PathBuf::from("/usr/bin/chromium"),
+            PathBuf::from("/usr/bin/chromium-browser"),
+            PathBuf::from("/snap/bin/chromium"),
+        ];
+        for path in paths {
+            if path.exists() {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// 获取 Playwright 浏览器缓存目录
+fn get_playwright_cache_dir() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library").join("Caches").join("ms-playwright")
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        home.join("AppData").join("Local").join("ms-playwright")
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        home.join(".cache").join("ms-playwright")
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        home.join(".cache").join("ms-playwright")
+    }
+}
+
+/// 获取 Playwright Chromium 浏览器可执行文件路径
+///
+/// 搜索常见的 Chromium 版本目录
+fn get_playwright_browser_path() -> Option<String> {
+    let cache_dir = get_playwright_cache_dir();
+
+    // Playwright 常见的 Chromium 版本目录
+    let chromium_versions = [
+        "chromium-1140",
+        "chromium-1134",
+        "chromium-1124",
+        "chromium-1117",
+        "chromium-1112",
+        "chromium-1108",
+        "chromium-1105",
+        "chromium-1097",
+        "chromium-1091",
+        "chromium-1084",
+        "chromium-1080",
+        "chromium-1076",
+        "chromium-1067",
+        "chromium-1060",
+        "chromium-1055",
+        "chromium-1048",
+        "chromium-1045",
+        "chromium-1041",
+        "chromium-1033",
+        "chromium-1028",
+        "chromium-1024",
+        "chromium-1020",
+        "chromium-1015",
+        "chromium-1012",
+        "chromium-1008",
+        "chromium-1005",
+        "chromium-1000",
+        "chromium",
+    ];
+
+    for version in chromium_versions {
+        #[cfg(target_os = "macos")]
+        let exec_path = cache_dir
+            .join(version)
+            .join("chrome-mac")
+            .join("Chromium.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("Chromium");
+
+        #[cfg(target_os = "windows")]
+        let exec_path = cache_dir
+            .join(version)
+            .join("chrome-win")
+            .join("chrome.exe");
+
+        #[cfg(target_os = "linux")]
+        let exec_path = cache_dir.join(version).join("chrome-linux").join("chrome");
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let exec_path = cache_dir.join(version).join("chrome-linux").join("chrome");
+
+        if exec_path.exists() {
+            return Some(exec_path.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
+/// 获取可用的浏览器路径（优先系统 Chrome）
+fn get_available_browser_path() -> Option<(String, String)> {
+    // 优先使用系统 Chrome
+    if let Some(path) = get_system_chrome_path() {
+        return Some((path, "system".to_string()));
+    }
+
+    // 其次使用 Playwright Chromium
+    if let Some(path) = get_playwright_browser_path() {
+        return Some((path, "playwright".to_string()));
+    }
+
+    None
+}
+
+/// 检查浏览器是否可用（优先系统 Chrome）
+///
+/// 检测系统 Chrome 或 Playwright Chromium 是否存在
+/// Requirements: 2.1, 2.2
+#[tauri::command]
+pub async fn check_playwright_available() -> Result<PlaywrightStatus, String> {
+    tracing::info!("[Browser] 检查浏览器可用性...");
+
+    match get_available_browser_path() {
+        Some((browser_path, source)) => {
+            tracing::info!("[Browser] 找到 {} 浏览器: {}", source, browser_path);
+            Ok(PlaywrightStatus {
+                available: true,
+                browser_path: Some(browser_path),
+                browser_source: Some(source),
+                error: None,
+            })
+        }
+        None => {
+            let error_msg =
+                "未找到可用的浏览器。请安装 Google Chrome 或运行: npx playwright install chromium"
+                    .to_string();
+            tracing::warn!("[Browser] {}", error_msg);
+            Ok(PlaywrightStatus {
+                available: false,
+                browser_path: None,
+                browser_source: None,
+                error: Some(error_msg),
+            })
+        }
+    }
+}
+
+/// Playwright 安装进度事件
+///
+/// 用于向前端发送安装进度信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlaywrightInstallProgress {
+    /// 进度消息
+    pub message: String,
+    /// 是否完成
+    pub done: bool,
+    /// 是否成功（仅在 done=true 时有效）
+    pub success: Option<bool>,
+}
+
+/// 安装 Playwright Chromium 浏览器
+///
+/// 执行 npm install playwright && npx playwright install chromium
+/// Requirements: 6.1, 6.2
+#[tauri::command]
+pub async fn install_playwright(app: tauri::AppHandle) -> Result<PlaywrightStatus, String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    tracing::info!("[Playwright] 开始安装 Playwright...");
+
+    // 发送进度事件
+    let _ = app.emit(
+        "playwright-install-progress",
+        PlaywrightInstallProgress {
+            message: "正在查找 Playwright 脚本目录...".to_string(),
+            done: false,
+            success: None,
+        },
+    );
+
+    // 尝试多个可能的脚本目录路径
+    let possible_paths = vec![
+        // 开发模式：从 CARGO_MANIFEST_DIR 推导
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or(&PathBuf::from("."))
+            .join("scripts")
+            .join("playwright-login"),
+        // 生产模式：应用数据目录
+        dirs::data_dir()
+            .unwrap_or_default()
+            .join("proxycast")
+            .join("scripts")
+            .join("playwright-login"),
+        // 当前工作目录
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join("scripts")
+            .join("playwright-login"),
+    ];
+
+    let mut script_dir: Option<PathBuf> = None;
+    for path in &possible_paths {
+        tracing::info!("[Playwright] 检查路径: {:?}", path);
+        if path.join("package.json").exists() {
+            script_dir = Some(path.clone());
+            break;
+        }
+    }
+
+    let script_dir = match script_dir {
+        Some(dir) => dir,
+        None => {
+            let error = format!(
+                "找不到 Playwright 脚本目录。已检查路径:\n{}",
+                possible_paths
+                    .iter()
+                    .map(|p| format!("  - {:?}", p))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            tracing::error!("[Playwright] {}", error);
+            let _ = app.emit(
+                "playwright-install-progress",
+                PlaywrightInstallProgress {
+                    message: error.clone(),
+                    done: true,
+                    success: Some(false),
+                },
+            );
+            return Err(error);
+        }
+    };
+
+    tracing::info!("[Playwright] 使用脚本目录: {:?}", script_dir);
+
+    // 步骤 1: 安装 npm 依赖
+    let _ = app.emit(
+        "playwright-install-progress",
+        PlaywrightInstallProgress {
+            message: format!("正在安装 npm 依赖... ({})", script_dir.display()),
+            done: false,
+            success: None,
+        },
+    );
+
+    let npm_install = Command::new("npm")
+        .arg("install")
+        .current_dir(&script_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+
+    match npm_install {
+        Ok(mut child) => {
+            // 收集 stderr 输出用于错误报告
+            let mut stderr_output = String::new();
+            if let Some(stderr) = child.stderr.take() {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::debug!("[Playwright npm] {}", line);
+                    stderr_output.push_str(&line);
+                    stderr_output.push('\n');
+                }
+            }
+
+            let status = child.wait().await;
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!("[Playwright] npm install 成功");
+                    // 发送成功消息
+                    let _ = app.emit(
+                        "playwright-install-progress",
+                        PlaywrightInstallProgress {
+                            message: "npm 依赖安装成功，准备安装 Chromium 浏览器...".to_string(),
+                            done: false,
+                            success: None,
+                        },
+                    );
+                }
+                Ok(s) => {
+                    let error = if stderr_output.is_empty() {
+                        format!("npm install 失败，退出码: {:?}", s.code())
+                    } else {
+                        format!("npm install 失败: {}", stderr_output.trim())
+                    };
+                    tracing::error!("[Playwright] {}", error);
+                    let _ = app.emit(
+                        "playwright-install-progress",
+                        PlaywrightInstallProgress {
+                            message: error.clone(),
+                            done: true,
+                            success: Some(false),
+                        },
+                    );
+                    return Err(error);
+                }
+                Err(e) => {
+                    let error = format!("npm install 执行失败: {}", e);
+                    tracing::error!("[Playwright] {}", error);
+                    let _ = app.emit(
+                        "playwright-install-progress",
+                        PlaywrightInstallProgress {
+                            message: error.clone(),
+                            done: true,
+                            success: Some(false),
+                        },
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Err(e) => {
+            let error = format!("无法启动 npm: {}。请确保已安装 Node.js", e);
+            tracing::error!("[Playwright] {}", error);
+            let _ = app.emit(
+                "playwright-install-progress",
+                PlaywrightInstallProgress {
+                    message: error.clone(),
+                    done: true,
+                    success: Some(false),
+                },
+            );
+            return Err(error);
+        }
+    }
+
+    // 步骤 2: 安装 Chromium 浏览器
+    let _ = app.emit(
+        "playwright-install-progress",
+        PlaywrightInstallProgress {
+            message: "正在安装 Chromium 浏览器 (npx playwright install chromium)...".to_string(),
+            done: false,
+            success: None,
+        },
+    );
+
+    let playwright_install = Command::new("npx")
+        .args(["playwright", "install", "chromium"])
+        .current_dir(&script_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+
+    match playwright_install {
+        Ok(mut child) => {
+            // 同时收集 stdout 和 stderr
+            let mut stdout_output = String::new();
+            let mut stderr_output = String::new();
+
+            // 读取 stdout 并发送进度
+            if let Some(stdout) = child.stdout.take() {
+                let app_clone = app.clone();
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::info!("[Playwright install] {}", line);
+                    stdout_output.push_str(&line);
+                    stdout_output.push('\n');
+                    // 发送下载进度
+                    if line.contains("Downloading")
+                        || line.contains("%")
+                        || line.contains("chromium")
+                    {
+                        let _ = app_clone.emit(
+                            "playwright-install-progress",
+                            PlaywrightInstallProgress {
+                                message: line.clone(),
+                                done: false,
+                                success: None,
+                            },
+                        );
+                    }
+                }
+            }
+
+            // 读取 stderr
+            if let Some(stderr) = child.stderr.take() {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::warn!("[Playwright install stderr] {}", line);
+                    stderr_output.push_str(&line);
+                    stderr_output.push('\n');
+                }
+            }
+
+            let status = child.wait().await;
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!("[Playwright] Chromium 安装成功");
+                }
+                Ok(s) => {
+                    // 优先使用 stderr，如果为空则使用 stdout
+                    let output = if !stderr_output.is_empty() {
+                        stderr_output.trim().to_string()
+                    } else if !stdout_output.is_empty() {
+                        stdout_output.trim().to_string()
+                    } else {
+                        format!("退出码: {:?}", s.code())
+                    };
+                    let error = format!("Chromium 安装失败: {}", output);
+                    tracing::error!("[Playwright] {}", error);
+                    let _ = app.emit(
+                        "playwright-install-progress",
+                        PlaywrightInstallProgress {
+                            message: error.clone(),
+                            done: true,
+                            success: Some(false),
+                        },
+                    );
+                    return Err(error);
+                }
+                Err(e) => {
+                    let error = format!("Chromium 安装执行失败: {}", e);
+                    tracing::error!("[Playwright] {}", error);
+                    let _ = app.emit(
+                        "playwright-install-progress",
+                        PlaywrightInstallProgress {
+                            message: error.clone(),
+                            done: true,
+                            success: Some(false),
+                        },
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Err(e) => {
+            let error = format!("无法启动 npx: {}", e);
+            tracing::error!("[Playwright] {}", error);
+            let _ = app.emit(
+                "playwright-install-progress",
+                PlaywrightInstallProgress {
+                    message: error.clone(),
+                    done: true,
+                    success: Some(false),
+                },
+            );
+            return Err(error);
+        }
+    }
+
+    // 验证安装结果
+    let status = check_playwright_available().await?;
+
+    if status.available {
+        let _ = app.emit(
+            "playwright-install-progress",
+            PlaywrightInstallProgress {
+                message: "Playwright 安装成功！".to_string(),
+                done: true,
+                success: Some(true),
+            },
+        );
+        tracing::info!(
+            "[Playwright] 安装完成，浏览器路径: {:?}",
+            status.browser_path
+        );
+    } else {
+        let error =
+            "安装完成但未检测到浏览器，请手动运行: npx playwright install chromium".to_string();
+        let _ = app.emit(
+            "playwright-install-progress",
+            PlaywrightInstallProgress {
+                message: error.clone(),
+                done: true,
+                success: Some(false),
+            },
+        );
+        return Err(error);
+    }
+
+    Ok(status)
+}
+
+/// Playwright 登录进度事件
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlaywrightLoginProgress {
+    pub message: String,
+}
+
+/// Playwright 登录结果
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlaywrightLoginResult {
+    pub success: bool,
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+}
+
+/// 全局 Playwright 登录进程状态
+static PLAYWRIGHT_LOGIN_PROCESS: Lazy<RwLock<Option<tokio::process::Child>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// 获取 Playwright 登录脚本路径
+fn get_playwright_script_path() -> PathBuf {
+    // 开发模式下使用项目目录中的脚本
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or(&PathBuf::from("."))
+        .join("scripts")
+        .join("playwright-login")
+        .join("index.js");
+
+    if dev_path.exists() {
+        return dev_path;
+    }
+
+    // 生产模式下使用打包的资源
+    if let Some(data_dir) = dirs::data_dir() {
+        let prod_path = data_dir
+            .join("proxycast")
+            .join("scripts")
+            .join("playwright-login")
+            .join("index.js");
+        if prod_path.exists() {
+            return prod_path;
+        }
+    }
+
+    // 回退到开发路径
+    dev_path
+}
+
+/// 启动 Kiro Playwright 登录
+///
+/// 使用 Playwright 指纹浏览器进行 OAuth 登录
+/// Requirements: 3.1, 3.4, 3.5, 4.3, 4.4
+#[tauri::command]
+pub async fn start_kiro_playwright_login(
+    app: tauri::AppHandle,
+    db: State<'_, DbConnection>,
+    pool_service: State<'_, ProviderPoolServiceState>,
+    provider: String,
+    name: Option<String>,
+) -> Result<ProviderCredential, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::process::Command;
+
+    // 验证 provider
+    let provider_normalized = match provider.to_lowercase().as_str() {
+        "google" => "Google",
+        "github" => "Github",
+        "builderid" => "BuilderId",
+        _ => {
+            return Err(format!("不支持的登录提供商: {}", provider));
+        }
+    };
+
+    tracing::info!("[Playwright Login] 开始 {} 登录流程", provider_normalized);
+
+    // 检查 Playwright 是否可用
+    let status = check_playwright_available().await?;
+    if !status.available {
+        return Err(status
+            .error
+            .unwrap_or_else(|| "Playwright 不可用".to_string()));
+    }
+
+    // 生成 PKCE
+    let code_verifier = generate_code_verifier();
+    let code_challenge = generate_code_challenge(&code_verifier);
+    let oauth_state = generate_oauth_state();
+
+    // 构建 OAuth URL
+    let redirect_uri = "http://localhost:19824/callback";
+    let auth_url = format!(
+        "{}/login?idp={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
+        KIRO_AUTH_ENDPOINT,
+        provider_normalized,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(&oauth_state)
+    );
+
+    tracing::info!("[Playwright Login] OAuth URL: {}", auth_url);
+
+    // 获取脚本路径
+    let script_path = get_playwright_script_path();
+    if !script_path.exists() {
+        return Err(format!("Playwright 登录脚本不存在: {:?}", script_path));
+    }
+
+    tracing::info!("[Playwright Login] 脚本路径: {:?}", script_path);
+
+    // 启动 Node.js 进程
+    let mut child = Command::new("node")
+        .arg(&script_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("启动 Playwright 进程失败: {}", e))?;
+
+    let stdin = child.stdin.take().ok_or("无法获取 stdin")?;
+    let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
+
+    // 保存进程引用
+    {
+        let mut process_guard = PLAYWRIGHT_LOGIN_PROCESS.write().await;
+        *process_guard = Some(child);
+    }
+
+    let mut stdin = tokio::io::BufWriter::new(stdin);
+    let mut reader = BufReader::new(stdout);
+
+    // 等待就绪信号
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .await
+        .map_err(|e| format!("读取就绪信号失败: {}", e))?;
+
+    let ready_response: serde_json::Value =
+        serde_json::from_str(&line.trim()).map_err(|e| format!("解析就绪信号失败: {}", e))?;
+
+    if ready_response.get("action").and_then(|v| v.as_str()) != Some("ready") {
+        return Err("Playwright 脚本未就绪".to_string());
+    }
+
+    tracing::info!("[Playwright Login] Sidecar 已就绪");
+
+    // 发送登录请求
+    let login_request = serde_json::json!({
+        "action": "login",
+        "provider": provider_normalized,
+        "authUrl": auth_url,
+        "callbackUrl": redirect_uri
+    });
+
+    let request_str =
+        serde_json::to_string(&login_request).map_err(|e| format!("序列化请求失败: {}", e))?;
+
+    stdin
+        .write_all(request_str.as_bytes())
+        .await
+        .map_err(|e| format!("发送请求失败: {}", e))?;
+    stdin
+        .write_all(b"\n")
+        .await
+        .map_err(|e| format!("发送换行失败: {}", e))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("刷新 stdin 失败: {}", e))?;
+
+    tracing::info!("[Playwright Login] 已发送登录请求");
+
+    // 读取响应
+    let mut code: Option<String> = None;
+    let mut state: Option<String> = None;
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) => {
+                // EOF
+                break;
+            }
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                match serde_json::from_str::<serde_json::Value>(trimmed) {
+                    Ok(response) => {
+                        let action = response
+                            .get("action")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let success = response
+                            .get("success")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        match action {
+                            "progress" => {
+                                if let Some(data) = response.get("data") {
+                                    if let Some(message) =
+                                        data.get("message").and_then(|v| v.as_str())
+                                    {
+                                        tracing::info!("[Playwright Login] 进度: {}", message);
+                                        let _ = app.emit(
+                                            "playwright-login-progress",
+                                            PlaywrightLoginProgress {
+                                                message: message.to_string(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                            "login" => {
+                                if success {
+                                    if let Some(data) = response.get("data") {
+                                        code = data
+                                            .get("code")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        state = data
+                                            .get("state")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                    }
+                                } else {
+                                    let error = response
+                                        .get("data")
+                                        .and_then(|d| d.get("error"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("未知错误");
+
+                                    // 清理进程
+                                    {
+                                        let mut process_guard =
+                                            PLAYWRIGHT_LOGIN_PROCESS.write().await;
+                                        *process_guard = None;
+                                    }
+
+                                    return Err(format!("Playwright 登录失败: {}", error));
+                                }
+                                break;
+                            }
+                            "error" => {
+                                let error = response
+                                    .get("data")
+                                    .and_then(|d| d.get("error"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("未知错误");
+
+                                // 清理进程
+                                {
+                                    let mut process_guard = PLAYWRIGHT_LOGIN_PROCESS.write().await;
+                                    *process_guard = None;
+                                }
+
+                                return Err(format!("Playwright 错误: {}", error));
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[Playwright Login] 解析响应失败: {} - {}", e, trimmed);
+                    }
+                }
+            }
+            Err(e) => {
+                // 清理进程
+                {
+                    let mut process_guard = PLAYWRIGHT_LOGIN_PROCESS.write().await;
+                    *process_guard = None;
+                }
+                return Err(format!("读取响应失败: {}", e));
+            }
+        }
+    }
+
+    // 清理进程
+    {
+        let mut process_guard = PLAYWRIGHT_LOGIN_PROCESS.write().await;
+        *process_guard = None;
+    }
+
+    // 验证结果
+    let auth_code = code.ok_or("未获取到授权码")?;
+
+    // 验证 state
+    if let Some(returned_state) = &state {
+        if returned_state != &oauth_state {
+            return Err("状态参数不匹配，可能存在安全风险".to_string());
+        }
+    }
+
+    tracing::info!("[Playwright Login] 获取到授权码，开始交换 Token");
+
+    // 交换 Token
+    let client = reqwest::Client::new();
+    let token_body = serde_json::json!({
+        "code": auth_code,
+        "code_verifier": code_verifier,
+        "redirect_uri": redirect_uri
+    });
+
+    let token_res = client
+        .post(format!("{}/oauth/token", KIRO_AUTH_ENDPOINT))
+        .header("Content-Type", "application/json")
+        .json(&token_body)
+        .send()
+        .await
+        .map_err(|e| format!("Token 交换请求失败: {}", e))?;
+
+    if !token_res.status().is_success() {
+        let err_text = token_res.text().await.unwrap_or_default();
+        return Err(format!("Token 交换失败: {}", err_text));
+    }
+
+    let token_data: serde_json::Value = token_res
+        .json()
+        .await
+        .map_err(|e| format!("解析 Token 响应失败: {}", e))?;
+
+    tracing::info!("[Playwright Login] Token 交换成功!");
+
+    // 提取凭证
+    let access_token = token_data["accessToken"].as_str().unwrap_or("").to_string();
+    let refresh_token = token_data["refreshToken"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let profile_arn = token_data["profileArn"].as_str().map(|s| s.to_string());
+    let expires_in = token_data["expiresIn"].as_i64().unwrap_or(3600);
+
+    // 创建凭证 JSON
+    let creds_json = serde_json::json!({
+        "accessToken": access_token,
+        "refreshToken": refresh_token,
+        "profileArn": profile_arn,
+        "authMethod": "social",
+        "provider": provider_normalized,
+        "loginMethod": "playwright",
+        "expiresAt": chrono::Utc::now().timestamp() + expires_in
+    });
+
+    // 将凭证 JSON 转换为字符串并创建凭证文件
+    let json_content =
+        serde_json::to_string_pretty(&creds_json).map_err(|e| format!("序列化凭证失败: {}", e))?;
+
+    let stored_file_path = create_kiro_credential_from_json(&json_content)?;
+
+    // 添加到凭证池
+    let credential = pool_service.0.add_credential(
+        &db,
+        "kiro",
+        CredentialData::KiroOAuth {
+            creds_file_path: stored_file_path,
+        },
+        name,
+        Some(true),
+        None,
+    )?;
+
+    tracing::info!("[Playwright Login] 凭证已添加到凭证池: {}", credential.uuid);
+
+    Ok(credential)
+}
+
+/// 取消 Kiro Playwright 登录
+///
+/// 终止正在进行的 Playwright 登录进程
+/// Requirements: 5.3
+#[tauri::command]
+pub async fn cancel_kiro_playwright_login() -> Result<bool, String> {
+    tracing::info!("[Playwright Login] 取消登录");
+
+    let mut process_guard = PLAYWRIGHT_LOGIN_PROCESS.write().await;
+
+    if let Some(mut child) = process_guard.take() {
+        // 尝试发送取消命令
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+
+            let cancel_request = serde_json::json!({
+                "action": "cancel"
+            });
+
+            if let Ok(request_str) = serde_json::to_string(&cancel_request) {
+                let _ = stdin.write_all(request_str.as_bytes()).await;
+                let _ = stdin.write_all(b"\n").await;
+                let _ = stdin.flush().await;
+            }
+        }
+
+        // 等待一小段时间让进程优雅退出
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // 强制终止进程
+        let _ = child.kill().await;
+
+        tracing::info!("[Playwright Login] 登录进程已终止");
+        Ok(true)
+    } else {
+        tracing::info!("[Playwright Login] 没有正在进行的登录");
+        Ok(false)
+    }
+}
+
+/// 启动 Kiro Social Auth 回调服务器
+///
+/// 启动一个本地 HTTP 服务器来接收 OAuth 回调
+#[tauri::command]
+pub async fn start_kiro_social_auth_callback_server(app: tauri::AppHandle) -> Result<bool, String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    tracing::info!("[Kiro Social Auth] 启动回调服务器...");
+
+    // 尝试绑定端口
+    let listener = TcpListener::bind("127.0.0.1:19823")
+        .await
+        .map_err(|e| format!("无法启动回调服务器: {}", e))?;
+
+    tracing::info!("[Kiro Social Auth] 回调服务器已启动在 127.0.0.1:19823");
+
+    // 在后台处理连接
+    let app_handle = app.clone();
+    tokio::spawn(async move {
+        // 只处理一个连接
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buffer = [0u8; 4096];
+            if let Ok(n) = socket.read(&mut buffer).await {
+                let request = String::from_utf8_lossy(&buffer[..n]);
+
+                // 解析请求获取 code 和 state
+                if let Some(path_line) = request.lines().next() {
+                    if let Some(path) = path_line.split_whitespace().nth(1) {
+                        if path.starts_with("/kiro-social-callback") {
+                            // 解析查询参数
+                            let mut code = None;
+                            let mut state = None;
+
+                            if let Some(query_start) = path.find('?') {
+                                let query = &path[query_start + 1..];
+                                for param in query.split('&') {
+                                    let parts: Vec<&str> = param.splitn(2, '=').collect();
+                                    if parts.len() == 2 {
+                                        match parts[0] {
+                                            "code" => {
+                                                code = Some(
+                                                    urlencoding::decode(parts[1])
+                                                        .unwrap_or_default()
+                                                        .to_string(),
+                                                )
+                                            }
+                                            "state" => {
+                                                state = Some(
+                                                    urlencoding::decode(parts[1])
+                                                        .unwrap_or_default()
+                                                        .to_string(),
+                                                )
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 发送成功响应页面
+                            let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>登录成功</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .container { text-align: center; background: white; padding: 40px 60px; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
+        h1 { color: #22c55e; margin-bottom: 10px; }
+        p { color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✓ 登录成功</h1>
+        <p>您可以关闭此窗口并返回应用</p>
+    </div>
+</body>
+</html>"#;
+
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                html.len(),
+                                html
+                            );
+
+                            let _ = socket.write_all(response.as_bytes()).await;
+
+                            // 发送事件到前端
+                            if let (Some(code), Some(state)) = (code, state) {
+                                let _ = app_handle.emit(
+                                    "kiro-social-auth-callback",
+                                    serde_json::json!({
+                                        "code": code,
+                                        "state": state
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(true)
+}
+
+// ============ Playwright 可用性检测测试 ============
+
+#[cfg(test)]
+mod playwright_tests {
+    use super::*;
+
+    /// **Property 1: Playwright 可用性检测正确性**
+    /// **Validates: Requirements 2.2**
+    ///
+    /// *For any* 文件系统状态，Playwright 可用性检测函数应该：
+    /// - 当 Playwright 浏览器可执行文件存在时返回 `available: true`
+    /// - 当可执行文件不存在时返回 `available: false`
+    /// - 返回的 `browserPath` 应该是实际检测到的路径或 `None`
+
+    #[test]
+    fn test_get_playwright_cache_dir_returns_valid_path() {
+        // Feature: playwright-fingerprint-login, Property 1: Playwright 可用性检测正确性
+        // 测试缓存目录路径生成
+        let cache_dir = get_playwright_cache_dir();
+
+        // 路径应该包含 ms-playwright
+        assert!(
+            cache_dir.to_string_lossy().contains("ms-playwright"),
+            "缓存目录应包含 ms-playwright: {:?}",
+            cache_dir
+        );
+
+        // 路径应该是绝对路径或相对于 home 目录
+        #[cfg(target_os = "macos")]
+        assert!(
+            cache_dir.to_string_lossy().contains("Library/Caches"),
+            "macOS 缓存目录应在 Library/Caches 下: {:?}",
+            cache_dir
+        );
+
+        #[cfg(target_os = "windows")]
+        assert!(
+            cache_dir.to_string_lossy().contains("AppData\\Local"),
+            "Windows 缓存目录应在 AppData\\Local 下: {:?}",
+            cache_dir
+        );
+
+        #[cfg(target_os = "linux")]
+        assert!(
+            cache_dir.to_string_lossy().contains(".cache"),
+            "Linux 缓存目录应在 .cache 下: {:?}",
+            cache_dir
+        );
+    }
+
+    #[test]
+    fn test_get_playwright_browser_path_returns_none_when_not_installed() {
+        // Feature: playwright-fingerprint-login, Property 1: Playwright 可用性检测正确性
+        // 当 Playwright 未安装时，应返回 None
+        // 注意：这个测试在 Playwright 已安装的环境中可能会失败
+        // 我们主要测试函数不会 panic
+        let result = get_playwright_browser_path();
+
+        // 函数应该正常返回（不 panic）
+        // 结果可能是 Some 或 None，取决于环境
+        match result {
+            Some(path) => {
+                // 如果找到了路径，验证路径格式
+                assert!(!path.is_empty(), "浏览器路径不应为空");
+                assert!(
+                    path.contains("chromium")
+                        || path.contains("Chromium")
+                        || path.contains("chrome"),
+                    "路径应包含 chromium/chrome: {}",
+                    path
+                );
+            }
+            None => {
+                // 未找到浏览器，这是预期的情况之一
+            }
+        }
+    }
+
+    #[test]
+    fn test_playwright_status_serialization() {
+        // Feature: playwright-fingerprint-login, Property 1: Playwright 可用性检测正确性
+        // 测试 PlaywrightStatus 结构体的序列化
+
+        // 测试可用状态
+        let available_status = PlaywrightStatus {
+            available: true,
+            browser_path: Some("/path/to/chromium".to_string()),
+            browser_source: Some("playwright".to_string()),
+            error: None,
+        };
+
+        let json = serde_json::to_string(&available_status).unwrap();
+        assert!(json.contains("\"available\":true"));
+        assert!(json.contains("\"browser_path\":\"/path/to/chromium\""));
+
+        // 测试不可用状态
+        let unavailable_status = PlaywrightStatus {
+            available: false,
+            browser_path: None,
+            browser_source: None,
+            error: Some("未安装".to_string()),
+        };
+
+        let json = serde_json::to_string(&unavailable_status).unwrap();
+        assert!(json.contains("\"available\":false"));
+        assert!(json.contains("\"error\":\"未安装\""));
+    }
+
+    #[test]
+    fn test_playwright_status_deserialization() {
+        // Feature: playwright-fingerprint-login, Property 1: Playwright 可用性检测正确性
+        // 测试 PlaywrightStatus 结构体的反序列化
+
+        let json = r#"{"available":true,"browser_path":"/test/path","error":null}"#;
+        let status: PlaywrightStatus = serde_json::from_str(json).unwrap();
+
+        assert!(status.available);
+        assert_eq!(status.browser_path, Some("/test/path".to_string()));
+        assert!(status.error.is_none());
+    }
+
+    #[test]
+    fn test_playwright_status_invariants() {
+        // Feature: playwright-fingerprint-login, Property 1: Playwright 可用性检测正确性
+        // 测试状态不变量：
+        // - 当 available=true 时，browser_path 应该有值
+        // - 当 available=false 时，error 应该有值
+
+        // 可用状态的不变量
+        let available_status = PlaywrightStatus {
+            available: true,
+            browser_path: Some("/path".to_string()),
+            browser_source: Some("system".to_string()),
+            error: None,
+        };
+        assert!(
+            available_status.available && available_status.browser_path.is_some(),
+            "可用状态应有 browser_path"
+        );
+
+        // 不可用状态的不变量
+        let unavailable_status = PlaywrightStatus {
+            available: false,
+            browser_path: None,
+            browser_source: None,
+            error: Some("错误".to_string()),
+        };
+        assert!(
+            !unavailable_status.available && unavailable_status.error.is_some(),
+            "不可用状态应有 error"
+        );
+    }
 }

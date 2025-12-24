@@ -284,6 +284,14 @@ export const providerPoolApi = {
     return invoke("add_kiro_oauth_credential", { credsFilePath, name });
   },
 
+  // 从 JSON 内容添加 Kiro 凭证（直接粘贴 JSON）
+  async addKiroFromJson(
+    jsonContent: string,
+    name?: string,
+  ): Promise<ProviderCredential> {
+    return invoke("add_kiro_from_json", { jsonContent, name });
+  },
+
   async addGeminiOAuth(
     credsFilePath: string,
     projectId?: string,
@@ -454,6 +462,57 @@ export const providerPoolApi = {
     return invoke("exchange_gemini_code", { code, sessionId, name });
   },
 
+  // ============ Kiro Builder ID 登录 ============
+
+  // 启动 Kiro Builder ID 登录（OIDC Device Authorization Flow）
+  async startKiroBuilderIdLogin(
+    region?: string,
+  ): Promise<KiroBuilderIdLoginResponse> {
+    return invoke("start_kiro_builder_id_login", { region });
+  },
+
+  // 轮询 Kiro Builder ID 授权状态
+  async pollKiroBuilderIdAuth(): Promise<KiroBuilderIdPollResponse> {
+    return invoke("poll_kiro_builder_id_auth");
+  },
+
+  // 取消 Kiro Builder ID 登录
+  async cancelKiroBuilderIdLogin(): Promise<boolean> {
+    return invoke("cancel_kiro_builder_id_login");
+  },
+
+  // 从 Builder ID 授权结果添加 Kiro 凭证
+  async addKiroFromBuilderIdAuth(name?: string): Promise<ProviderCredential> {
+    return invoke("add_kiro_from_builder_id_auth", { name });
+  },
+
+  // ============ Kiro Social Auth 登录 (Google/GitHub) ============
+
+  // 启动 Kiro Social Auth 登录
+  async startKiroSocialAuthLogin(
+    provider: "Google" | "Github",
+  ): Promise<KiroSocialAuthLoginResponse> {
+    return invoke("start_kiro_social_auth_login", { provider });
+  },
+
+  // 交换 Kiro Social Auth Token
+  async exchangeKiroSocialAuthToken(
+    code: string,
+    state: string,
+  ): Promise<KiroSocialAuthTokenResponse> {
+    return invoke("exchange_kiro_social_auth_token", { code, state });
+  },
+
+  // 取消 Kiro Social Auth 登录
+  async cancelKiroSocialAuthLogin(): Promise<boolean> {
+    return invoke("cancel_kiro_social_auth_login");
+  },
+
+  // 启动 Kiro Social Auth 回调服务器
+  async startKiroSocialAuthCallbackServer(): Promise<boolean> {
+    return invoke("start_kiro_social_auth_callback_server");
+  },
+
   // OAuth token management
   async refreshCredentialToken(uuid: string): Promise<string> {
     return invoke("refresh_pool_credential_token", { uuid });
@@ -476,6 +535,38 @@ export interface MigrationResult {
   errors: string[];
 }
 
+// Kiro Builder ID 登录响应
+export interface KiroBuilderIdLoginResponse {
+  success: boolean;
+  userCode?: string;
+  verificationUri?: string;
+  expiresIn?: number;
+  interval?: number;
+  error?: string;
+}
+
+// Kiro Builder ID 轮询响应
+export interface KiroBuilderIdPollResponse {
+  success: boolean;
+  completed: boolean;
+  status?: string;
+  error?: string;
+}
+
+// Kiro Social Auth 登录响应
+export interface KiroSocialAuthLoginResponse {
+  success: boolean;
+  loginUrl?: string;
+  state?: string;
+  error?: string;
+}
+
+// Kiro Social Auth Token 交换响应
+export interface KiroSocialAuthTokenResponse {
+  success: boolean;
+  error?: string;
+}
+
 // Kiro 凭证指纹信息
 export interface KiroFingerprintInfo {
   /** Machine ID（SHA256 哈希，64 字符） */
@@ -488,9 +579,64 @@ export interface KiroFingerprintInfo {
   auth_method: string;
 }
 
+// Playwright 状态
+export interface PlaywrightStatus {
+  /** 浏览器是否可用 */
+  available: boolean;
+  /** 浏览器可执行文件路径 */
+  browserPath?: string;
+  /** 浏览器来源: "system" 或 "playwright" */
+  browserSource?: "system" | "playwright";
+  /** 错误信息 */
+  error?: string;
+}
+
 // 获取 Kiro 凭证的指纹信息
 export async function getKiroCredentialFingerprint(
   uuid: string,
 ): Promise<KiroFingerprintInfo> {
   return invoke("get_kiro_credential_fingerprint", { uuid });
+}
+
+// ============ Playwright 指纹浏览器登录 ============
+
+/**
+ * 检查 Playwright 是否可用
+ * Requirements: 2.1
+ */
+export async function checkPlaywrightAvailable(): Promise<PlaywrightStatus> {
+  return invoke("check_playwright_available");
+}
+
+/**
+ * 安装 Playwright Chromium 浏览器
+ * Requirements: 6.1, 6.2
+ *
+ * 执行 npm install playwright && npx playwright install chromium
+ * 会发送 playwright-install-progress 事件通知安装进度
+ */
+export async function installPlaywright(): Promise<PlaywrightStatus> {
+  return invoke("install_playwright");
+}
+
+/**
+ * 使用 Playwright 指纹浏览器启动 Kiro 登录
+ * Requirements: 3.1
+ *
+ * @param provider 登录提供商: Google, Github, BuilderId
+ * @param name 可选的凭证名称
+ */
+export async function startKiroPlaywrightLogin(
+  provider: "Google" | "Github" | "BuilderId",
+  name?: string,
+): Promise<ProviderCredential> {
+  return invoke("start_kiro_playwright_login", { provider, name });
+}
+
+/**
+ * 取消 Playwright 登录
+ * Requirements: 5.3
+ */
+export async function cancelKiroPlaywrightLogin(): Promise<boolean> {
+  return invoke("cancel_kiro_playwright_login");
 }

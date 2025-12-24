@@ -13,6 +13,7 @@ import { ClaudeOAuthForm } from "./credential-forms/ClaudeOAuthForm";
 import { QwenForm } from "./credential-forms/QwenForm";
 import { IFlowForm } from "./credential-forms/IFlowForm";
 import { GeminiForm } from "./credential-forms/GeminiForm";
+import { KiroForm } from "./credential-forms/KiroForm";
 import { defaultCredsPath, providerLabels } from "./credential-forms/types";
 
 interface AddCredentialModalProps {
@@ -41,8 +42,8 @@ export function AddCredentialModal({
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
 
-  // 判断是否为 OAuth 类型（不包括有特殊表单的 antigravity、codex、claude_oauth、qwen、iflow、gemini）
-  const isSimpleOAuth = ["kiro"].includes(providerType);
+  // 判断是否为 OAuth 类型（不包括有特殊表单的 antigravity、codex、claude_oauth、qwen、iflow、gemini、kiro）
+  const isSimpleOAuth: string[] = []; // Kiro 现在有自己的表单
   const isApiKey = ["openai", "claude"].includes(providerType);
 
   const handleSelectFile = async () => {
@@ -137,6 +138,18 @@ export function AddCredentialModal({
     onSuccess,
   });
 
+  // Kiro 表单
+  const kiroForm = KiroForm({
+    name,
+    credsFilePath,
+    setCredsFilePath,
+    onSelectFile: handleSelectFile,
+    loading,
+    setLoading,
+    setError,
+    onSuccess,
+  });
+
   // 简单 OAuth 和 API Key 的提交处理
   const handleSubmit = async () => {
     setLoading(true);
@@ -145,7 +158,7 @@ export function AddCredentialModal({
     try {
       const trimmedName = name.trim() || undefined;
 
-      if (isSimpleOAuth) {
+      if (isSimpleOAuth.includes(providerType)) {
         if (!credsFilePath) {
           setError("请选择凭证文件");
           setLoading(false);
@@ -153,9 +166,6 @@ export function AddCredentialModal({
         }
 
         switch (providerType) {
-          case "kiro":
-            await providerPoolApi.addKiroOAuth(credsFilePath, trimmedName);
-            break;
           case "gemini":
             await providerPoolApi.addGeminiOAuth(
               credsFilePath,
@@ -222,8 +232,6 @@ export function AddCredentialModal({
           </button>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          {providerType === "kiro" &&
-            "默认路径: ~/.aws/sso/cache/kiro-auth-token.json"}
           {providerType === "gemini" && "默认路径: ~/.gemini/oauth_creds.json"}
         </p>
       </div>
@@ -462,6 +470,37 @@ export function AddCredentialModal({
       );
     }
 
+    // Kiro 登录模式 - 不需要按钮，登录按钮在表单内部
+    if (providerType === "kiro" && kiroForm.mode === "login") {
+      return null;
+    }
+
+    // Kiro JSON 模式
+    if (providerType === "kiro" && kiroForm.mode === "json") {
+      return (
+        <button
+          onClick={kiroForm.handleJsonSubmit}
+          disabled={loading}
+          className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {loading ? "添加中..." : "添加凭证"}
+        </button>
+      );
+    }
+
+    // Kiro 文件模式
+    if (providerType === "kiro" && kiroForm.mode === "file") {
+      return (
+        <button
+          onClick={kiroForm.handleFileSubmit}
+          disabled={loading}
+          className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {loading ? "添加中..." : "添加凭证"}
+        </button>
+      );
+    }
+
     // 其他类型
     return (
       <button
@@ -510,7 +549,8 @@ export function AddCredentialModal({
           {providerType === "qwen" && qwenForm.render()}
           {providerType === "iflow" && iflowForm.render()}
           {providerType === "gemini" && geminiForm.render()}
-          {isSimpleOAuth && renderSimpleOAuthForm()}
+          {providerType === "kiro" && kiroForm.render()}
+          {isSimpleOAuth.includes(providerType) && renderSimpleOAuthForm()}
           {isApiKey && renderApiKeyForm()}
 
           {/* 错误提示 */}
