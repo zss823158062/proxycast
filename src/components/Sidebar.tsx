@@ -15,6 +15,7 @@ type Page =
   | "flow-monitor"
   | "tools"
   | "browser-interceptor"
+  | "machine-id"
   | "settings";
 
 interface SidebarProps {

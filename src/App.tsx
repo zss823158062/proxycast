@@ -7,6 +7,8 @@ import { ConfigManagementPage } from "./components/config/ConfigManagementPage";
 import { FlowMonitorPage } from "./pages";
 import { ToolsPage } from "./components/tools/ToolsPage";
 import { BrowserInterceptorTool } from "./components/tools/browser-interceptor/BrowserInterceptorTool";
+import { MachineIdTool } from "./components/tools/machine-id/MachineIdTool";
+import { Toaster } from "./components/ui/sonner";
 import { flowEventManager } from "./lib/flowEventManager";
 
 type Page =
@@ -16,6 +18,7 @@ type Page =
   | "flow-monitor"
   | "tools"
   | "browser-interceptor"
+  | "machine-id"
   | "settings";
 
 function App() {
@@ -41,6 +44,8 @@ function App() {
         return <ToolsPage onNavigate={setCurrentPage} />;
       case "browser-interceptor":
         return <BrowserInterceptorTool onNavigate={setCurrentPage} />;
+      case "machine-id":
+        return <MachineIdTool onNavigate={setCurrentPage} />;
       case "settings":
         return <SettingsPage />;
       default:
@@ -52,6 +57,7 @@ function App() {
     <div className="flex h-screen bg-background">
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} />
       <main className="flex-1 overflow-auto p-6">{renderPage()}</main>
+      <Toaster />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Globe, Plus, Settings, Activity } from "lucide-react";
+import { Globe, Plus, Settings, Activity, Cpu } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -19,6 +19,7 @@ interface ToolsPageProps {
       | "flow-monitor"
       | "tools"
       | "browser-interceptor"
+      | "machine-id"
       | "settings",
   ) => void;
 }
@@ -87,6 +88,10 @@ export function ToolsPage({ onNavigate }: ToolsPageProps) {
     onNavigate("browser-interceptor");
   };
 
+  const handleMachineIdClick = () => {
+    onNavigate("machine-id");
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -96,7 +101,7 @@ export function ToolsPage({ onNavigate }: ToolsPageProps) {
             ProxyCast 提供的实用工具集合
           </p>
         </div>
-        <Badge variant="outline">1 个工具</Badge>
+        <Badge variant="outline">2 个工具</Badge>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -106,6 +111,13 @@ export function ToolsPage({ onNavigate }: ToolsPageProps) {
           icon={<Globe className="w-6 h-6 text-primary" />}
           status={interceptorEnabled ? "运行中" : "已停止"}
           onClick={handleBrowserInterceptorClick}
+        />
+
+        <ToolCard
+          title="机器码管理工具"
+          description="查看、修改和管理系统机器码，支持跨平台操作和备份恢复"
+          icon={<Cpu className="w-6 h-6 text-primary" />}
+          onClick={handleMachineIdClick}
         />
 
         {/* 未来可以添加更多工具 */}

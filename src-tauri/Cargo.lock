@@ -3668,7 +3668,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3725,6 +3725,7 @@ dependencies = [
  "uuid",
  "winapi",
  "windows 0.56.0",
+ "winreg 0.52.0",
  "zip",
 ]
 
@@ -6768,6 +6769,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

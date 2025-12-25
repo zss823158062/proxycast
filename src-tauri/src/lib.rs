@@ -34,6 +34,7 @@ use commands::flow_monitor_cmd::{
     FlowMonitorState, FlowQueryServiceState, FlowReplayerState, QuickFilterManagerState,
     SessionManagerState,
 };
+use commands::machine_id_cmd::MachineIdState;
 use commands::plugin_cmd::PluginManagerState;
 use commands::provider_pool_cmd::{CredentialSyncServiceState, ProviderPoolServiceState};
 use commands::resilience_cmd::ResilienceConfigState;
@@ -1530,6 +1531,11 @@ pub fn run() {
     let token_cache_service = TokenCacheService::new();
     let token_cache_service_state = TokenCacheServiceState(Arc::new(token_cache_service));
 
+    // Initialize MachineIdService
+    let machine_id_service = services::machine_id_service::MachineIdService::new()
+        .expect("Failed to initialize MachineIdService");
+    let machine_id_service_state: MachineIdState = Arc::new(RwLock::new(machine_id_service));
+
     // Initialize RouterConfigState
     let router_config_state = RouterConfigState::default();
 
@@ -1720,6 +1726,7 @@ pub fn run() {
         .manage(provider_pool_service_state)
         .manage(credential_sync_service_state)
         .manage(token_cache_service_state)
+        .manage(machine_id_service_state)
         .manage(router_config_state)
         .manage(resilience_config_state)
         .manage(telemetry_state)
@@ -2315,6 +2322,23 @@ pub fn run() {
             commands::browser_interceptor_cmd::show_status_notification,
             // Auto fix commands
             commands::auto_fix_cmd::auto_fix_configuration,
+            // Machine ID commands
+            commands::machine_id_cmd::get_current_machine_id,
+            commands::machine_id_cmd::set_machine_id,
+            commands::machine_id_cmd::generate_random_machine_id,
+            commands::machine_id_cmd::validate_machine_id,
+            commands::machine_id_cmd::check_admin_privileges,
+            commands::machine_id_cmd::get_os_type,
+            commands::machine_id_cmd::backup_machine_id_to_file,
+            commands::machine_id_cmd::restore_machine_id_from_file,
+            commands::machine_id_cmd::format_machine_id,
+            commands::machine_id_cmd::detect_machine_id_format,
+            commands::machine_id_cmd::convert_machine_id_format,
+            commands::machine_id_cmd::get_machine_id_history,
+            commands::machine_id_cmd::clear_machine_id_override,
+            commands::machine_id_cmd::copy_machine_id_to_clipboard,
+            commands::machine_id_cmd::paste_machine_id_from_clipboard,
+            commands::machine_id_cmd::get_system_info,
             // Network commands
             commands::network_cmd::get_network_info,
         ])
