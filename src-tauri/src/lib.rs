@@ -1152,6 +1152,7 @@ async fn check_api_compatibility(
                     }],
                     temperature: None,
                     max_tokens: Some(100),
+                    top_p: None,
                     stream: false,
                     tools: Some(vec![crate::models::openai::Tool::Function {
                         function: crate::models::openai::FunctionDef {
@@ -1170,6 +1171,7 @@ async fn check_api_compatibility(
                         },
                     }]),
                     tool_choice: None,
+                    reasoning_effort: None,
                 }
             }
             _ => {
@@ -1186,9 +1188,11 @@ async fn check_api_compatibility(
                     }],
                     temperature: None,
                     max_tokens: Some(10),
+                    top_p: None,
                     stream: false,
                     tools: None,
                     tool_choice: None,
+                    reasoning_effort: None,
                 }
             }
         };

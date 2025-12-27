@@ -562,6 +562,9 @@ impl AntigravityProvider {
     }
 
     /// 构建 Antigravity 请求
+    ///
+    /// 注意：此方法用于简单的非流式请求。
+    /// 对于完整的 OpenAI 格式转换，请使用 `convert_openai_to_antigravity_with_context`。
     fn build_antigravity_request(
         &self,
         model: &str,
@@ -584,11 +587,19 @@ impl AntigravityProvider {
         // 设置会话 ID
         payload["request"]["sessionId"] = serde_json::json!(generate_session_id());
 
-        // 删除安全设置
-        if let Some(request) = payload.get_mut("request") {
-            if let Some(obj) = request.as_object_mut() {
-                obj.remove("safetySettings");
-            }
+        // 添加默认安全设置（如果不存在）
+        if payload
+            .get("request")
+            .and_then(|r| r.get("safetySettings"))
+            .is_none()
+        {
+            payload["request"]["safetySettings"] = serde_json::json!([
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
+                {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"}
+            ]);
         }
 
         payload
@@ -1572,6 +1583,7 @@ impl CredentialProvider for AntigravityProvider {
 // StreamingProvider Trait 实现
 // ============================================================================
 
+use crate::converter::openai_to_antigravity::convert_openai_to_antigravity_with_context;
 use crate::models::openai::ChatCompletionRequest;
 use crate::providers::ProviderError;
 use crate::streaming::traits::{
@@ -1600,61 +1612,13 @@ impl StreamingProvider for AntigravityProvider {
         let project_id = self.project_id.clone().unwrap_or_else(generate_project_id);
         let actual_model = alias_to_model_name(&request.model);
 
-        // 构建 Antigravity 请求体
-        // 将 OpenAI 格式转换为 Gemini/Antigravity 格式
-        let mut contents = Vec::new();
-        let mut system_instruction = None;
+        // 使用统一的转换函数构建请求体
+        let payload = convert_openai_to_antigravity_with_context(request, &project_id);
 
-        for msg in &request.messages {
-            let role = &msg.role;
-            let text = match &msg.content {
-                Some(crate::models::openai::MessageContent::Text(t)) => t.clone(),
-                Some(crate::models::openai::MessageContent::Parts(parts)) => parts
-                    .iter()
-                    .filter_map(|p| {
-                        if let crate::models::openai::ContentPart::Text { text } = p {
-                            Some(text.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(""),
-                None => String::new(),
-            };
-
-            if role == "system" {
-                system_instruction = Some(serde_json::json!({
-                    "parts": [{ "text": text }]
-                }));
-            } else {
-                let gemini_role = if role == "assistant" { "model" } else { "user" };
-                contents.push(serde_json::json!({
-                    "role": gemini_role,
-                    "parts": [{ "text": text }]
-                }));
-            }
-        }
-
-        let mut request_body = serde_json::json!({
-            "contents": contents
-        });
-
-        if let Some(sys) = system_instruction {
-            request_body["systemInstruction"] = sys;
-        }
-
-        // 构建 Antigravity 请求
-        let mut payload = request_body.clone();
-        payload["model"] = serde_json::json!(actual_model);
-        payload["userAgent"] = serde_json::json!("antigravity");
-        payload["project"] = serde_json::json!(project_id);
-        payload["requestId"] = serde_json::json!(generate_request_id());
-
-        if payload.get("request").is_none() {
-            payload["request"] = serde_json::json!({});
-        }
-        payload["request"]["sessionId"] = serde_json::json!(generate_session_id());
+        tracing::debug!(
+            "[ANTIGRAVITY_STREAM] 请求体: {}",
+            serde_json::to_string_pretty(&payload).unwrap_or_default()
+        );
 
         // 尝试多个 base URL
         let mut last_error: Option<ProviderError> = None;

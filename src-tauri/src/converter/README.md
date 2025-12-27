@@ -14,7 +14,7 @@
 - `openai_to_cw.rs` - OpenAI → CodeWhisperer 转换（支持 web_search 工具）
 - `cw_to_openai.rs` - CodeWhisperer → OpenAI 转换
 - `anthropic_to_openai.rs` - Anthropic → OpenAI 转换
-- `openai_to_antigravity.rs` - OpenAI → Antigravity 转换
+- `openai_to_antigravity.rs` - OpenAI → Antigravity (Gemini CLI) 转换
 
 ## 工具类型支持
 
@@ -25,8 +25,18 @@
 - `web_search`: 联网搜索工具（Codex/Kiro 格式）
 - `web_search_20250305`: 联网搜索工具（Claude Code 格式）
 
+## Antigravity 转换说明
+
+参考 CLIProxyAPI 实现，主要特性：
+- 请求结构：`{ project, request: { contents, systemInstruction, generationConfig, tools, safetySettings }, model }`
+- 工具定义：`parameters` → `parametersJsonSchema`
+- 安全设置：自动附加默认 safety settings
+- 思维链：支持 `reasoning_effort` 配置
+- Function Call：正确处理 `thoughtSignature` 和响应格式
+
 ## 更新日志
 
+- 2025-12-28: 修复 Antigravity 转换，对齐 CLIProxyAPI 实现
 - 2025-12-27: 添加 web_search 工具支持，修复 Issue #49
 
 ## 更新提醒

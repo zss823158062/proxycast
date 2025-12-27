@@ -1,7 +1,31 @@
-//! OpenAI 格式转换为 Antigravity (Gemini) 格式
+//! OpenAI 格式转换为 Antigravity (Gemini CLI) 格式
+//!
+//! 本模块实现 OpenAI Chat Completions API 到 Antigravity/Gemini CLI API 的转换。
+//! 参考 CLIProxyAPI 的实现，确保请求格式与 Gemini CLI 兼容。
+//!
+//! ## 主要功能
+//! - 消息格式转换（system/user/assistant/tool）
+//! - 工具定义转换（parameters → parametersJsonSchema）
+//! - 安全设置自动附加
+//! - 思维链配置（reasoning_effort）
+//!
+//! ## 更新日志
+//! - 2025-12-28: 修复请求格式，对齐 CLIProxyAPI 实现
+
 use crate::models::openai::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+// ============================================================================
+// 常量定义
+// ============================================================================
+
+/// Gemini CLI 函数调用的 thought signature 标记
+const GEMINI_CLI_FUNCTION_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
+
+// ============================================================================
+// 数据结构定义
+// ============================================================================
 
 /// Antigravity/Gemini 内容部分
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +39,9 @@ pub struct GeminiPart {
     pub function_call: Option<GeminiFunctionCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function_response: Option<GeminiFunctionResponse>,
+    /// 思维签名，用于函数调用
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +64,13 @@ pub struct GeminiFunctionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub name: String,
-    pub response: serde_json::Value,
+    pub response: GeminiFunctionResponseBody,
+}
+
+/// Function Response 的响应体结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiFunctionResponseBody {
+    pub result: serde_json::Value,
 }
 
 /// Antigravity/Gemini 内容
@@ -51,16 +84,29 @@ pub struct GeminiContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiTool {
-    pub function_declarations: Vec<GeminiFunctionDeclaration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_declarations: Option<Vec<GeminiFunctionDeclaration>>,
+    /// Google Search 工具（透传）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_search: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GeminiFunctionDeclaration {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Gemini CLI 使用 parametersJsonSchema 而非 parameters
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<serde_json::Value>,
+    pub parameters_json_schema: Option<serde_json::Value>,
+}
+
+/// 安全设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SafetySetting {
+    pub category: String,
+    pub threshold: String,
 }
 
 /// Antigravity/Gemini 生成配置
@@ -81,13 +127,18 @@ pub struct GeminiGenerationConfig {
     pub candidate_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_config: Option<ThinkingConfig>,
+    /// 响应模态（TEXT, IMAGE）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
-    pub include_thoughts: bool,
-    pub thinking_budget: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_thoughts: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<i32>,
 }
 
 /// Antigravity 请求体内部结构
@@ -105,7 +156,18 @@ pub struct AntigravityRequestInner {
     pub tool_config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// 安全设置
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safety_settings: Option<Vec<SafetySetting>>,
 }
+
+// ============================================================================
+// 辅助函数
+// ============================================================================
+
+// ============================================================================
+// 辅助函数
+// ============================================================================
 
 /// 生成随机请求 ID
 fn generate_request_id() -> String {
@@ -120,6 +182,32 @@ fn generate_session_id() -> String {
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]) % 9_000_000_000_000_000_000;
     format!("-{}", n)
+}
+
+/// 获取默认安全设置
+fn default_safety_settings() -> Vec<SafetySetting> {
+    vec![
+        SafetySetting {
+            category: "HARM_CATEGORY_HARASSMENT".to_string(),
+            threshold: "OFF".to_string(),
+        },
+        SafetySetting {
+            category: "HARM_CATEGORY_HATE_SPEECH".to_string(),
+            threshold: "OFF".to_string(),
+        },
+        SafetySetting {
+            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT".to_string(),
+            threshold: "OFF".to_string(),
+        },
+        SafetySetting {
+            category: "HARM_CATEGORY_DANGEROUS_CONTENT".to_string(),
+            threshold: "OFF".to_string(),
+        },
+        SafetySetting {
+            category: "HARM_CATEGORY_CIVIC_INTEGRITY".to_string(),
+            threshold: "BLOCK_NONE".to_string(),
+        },
+    ]
 }
 
 /// 模型名称映射
@@ -137,6 +225,16 @@ fn model_mapping(model: &str) -> &str {
     }
 }
 
+/// 检查模型是否支持思维链
+fn model_supports_thinking(model: &str) -> bool {
+    model.contains("2.5") || model.contains("3-pro") || model.contains("thinking")
+}
+
+/// 检查模型是否使用离散思维级别（Gemini 3）
+fn model_uses_thinking_levels(model: &str) -> bool {
+    model.contains("gemini-3")
+}
+
 /// 是否启用思维链
 fn is_enable_thinking(model: &str) -> bool {
     model.ends_with("-thinking")
@@ -146,32 +244,81 @@ fn is_enable_thinking(model: &str) -> bool {
         || model == "gpt-oss-120b-medium"
 }
 
+// ============================================================================
+// 主转换函数
+// ============================================================================
+
+// ============================================================================
+// 主转换函数
+// ============================================================================
+
 /// 将 OpenAI ChatCompletionRequest 转换为 Antigravity 请求体
+///
+/// 参考 CLIProxyAPI 的实现，确保请求格式正确。
 pub fn convert_openai_to_antigravity_with_context(
     request: &ChatCompletionRequest,
     project_id: &str,
 ) -> serde_json::Value {
     let actual_model = model_mapping(&request.model);
-    let enable_thinking = is_enable_thinking(&request.model);
+    let supports_thinking = model_supports_thinking(actual_model);
 
     let mut contents: Vec<GeminiContent> = Vec::new();
     let mut system_instruction: Option<GeminiContent> = None;
 
-    // 处理消息
+    // 第一遍：收集 assistant tool_calls 的 id -> name 映射
+    let mut tc_id_to_name: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for msg in &request.messages {
+        if msg.role == "assistant" {
+            if let Some(tool_calls) = &msg.tool_calls {
+                for tc in tool_calls {
+                    tc_id_to_name.insert(tc.id.clone(), tc.function.name.clone());
+                }
+            }
+        }
+    }
+
+    // 第二遍：收集 tool 响应
+    let mut tool_responses: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for msg in &request.messages {
+        if msg.role == "tool" {
+            if let Some(tool_call_id) = &msg.tool_call_id {
+                let content = msg.get_content_text();
+                tool_responses.insert(tool_call_id.clone(), content);
+            }
+        }
+    }
+
+    // 第三遍：构建消息
+    let messages_len = request.messages.len();
+    for (idx, msg) in request.messages.iter().enumerate() {
         match msg.role.as_str() {
             "system" => {
-                let text = msg.get_content_text();
-                if !text.is_empty() {
-                    system_instruction = Some(GeminiContent {
-                        role: "user".to_string(),
-                        parts: vec![GeminiPart {
-                            text: Some(text),
-                            inline_data: None,
-                            function_call: None,
-                            function_response: None,
-                        }],
-                    });
+                // system 消息只有在有其他消息时才作为 systemInstruction
+                if messages_len > 1 {
+                    let text = msg.get_content_text();
+                    if !text.is_empty() {
+                        system_instruction = Some(GeminiContent {
+                            role: "user".to_string(),
+                            parts: vec![GeminiPart {
+                                text: Some(text),
+                                inline_data: None,
+                                function_call: None,
+                                function_response: None,
+                                thought_signature: None,
+                            }],
+                        });
+                    }
+                } else {
+                    // 只有 system 消息时，作为 user 消息
+                    let parts = convert_user_content(msg);
+                    if !parts.is_empty() {
+                        contents.push(GeminiContent {
+                            role: "user".to_string(),
+                            parts,
+                        });
+                    }
                 }
             }
             "user" => {
@@ -184,66 +331,179 @@ pub fn convert_openai_to_antigravity_with_context(
                 }
             }
             "assistant" => {
-                let parts = convert_assistant_content(msg, &contents);
-                if !parts.is_empty() {
-                    // 检查是否需要合并到上一条 model 消息
-                    let should_merge = if let Some(last) = contents.last() {
-                        last.role == "model"
-                            && msg.tool_calls.is_some()
-                            && msg.get_content_text().is_empty()
-                    } else {
-                        false
-                    };
+                let mut parts = Vec::new();
 
-                    if should_merge {
-                        if let Some(last) = contents.last_mut() {
-                            last.parts.extend(parts);
+                // 文本内容
+                let text = msg.get_content_text();
+                if !text.is_empty() {
+                    parts.push(GeminiPart {
+                        text: Some(text),
+                        inline_data: None,
+                        function_call: None,
+                        function_response: None,
+                        thought_signature: None,
+                    });
+                }
+
+                // 处理多模态内容（如图片）
+                if let Some(MessageContent::Parts(content_parts)) = &msg.content {
+                    for part in content_parts {
+                        if let ContentPart::ImageUrl { image_url } = part {
+                            if let Some((mime, data)) = parse_data_url(&image_url.url) {
+                                parts.push(GeminiPart {
+                                    text: None,
+                                    inline_data: Some(InlineData {
+                                        mime_type: mime,
+                                        data,
+                                    }),
+                                    function_call: None,
+                                    function_response: None,
+                                    thought_signature: None,
+                                });
+                            }
                         }
-                    } else {
+                    }
+                }
+
+                // 工具调用
+                if let Some(tool_calls) = &msg.tool_calls {
+                    let mut function_ids: Vec<String> = Vec::new();
+
+                    for tc in tool_calls {
+                        let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or(serde_json::json!({}));
+
+                        parts.push(GeminiPart {
+                            text: None,
+                            inline_data: None,
+                            function_call: Some(GeminiFunctionCall {
+                                id: Some(tc.id.clone()),
+                                name: tc.function.name.clone(),
+                                args, // 直接使用 args，不要包装
+                            }),
+                            function_response: None,
+                            thought_signature: Some(
+                                GEMINI_CLI_FUNCTION_THOUGHT_SIGNATURE.to_string(),
+                            ),
+                        });
+
+                        function_ids.push(tc.id.clone());
+                    }
+
+                    // 添加 model 消息
+                    if !parts.is_empty() {
                         contents.push(GeminiContent {
                             role: "model".to_string(),
                             parts,
                         });
                     }
+
+                    // 紧接着添加 tool 响应作为 user 消息
+                    let mut tool_parts: Vec<GeminiPart> = Vec::new();
+                    for fid in &function_ids {
+                        if let Some(name) = tc_id_to_name.get(fid) {
+                            let resp = tool_responses.get(fid).cloned().unwrap_or_default();
+
+                            // 解析响应内容
+                            let result_value: serde_json::Value =
+                                if resp.is_empty() || resp == "null" {
+                                    serde_json::json!({})
+                                } else {
+                                    serde_json::from_str(&resp).unwrap_or_else(|_| {
+                                        // 非 JSON 内容，作为字符串
+                                        serde_json::Value::String(resp.clone())
+                                    })
+                                };
+
+                            tool_parts.push(GeminiPart {
+                                text: None,
+                                inline_data: None,
+                                function_call: None,
+                                function_response: Some(GeminiFunctionResponse {
+                                    id: Some(fid.clone()),
+                                    name: name.clone(),
+                                    response: GeminiFunctionResponseBody {
+                                        result: result_value,
+                                    },
+                                }),
+                                thought_signature: None,
+                            });
+                        }
+                    }
+
+                    if !tool_parts.is_empty() {
+                        contents.push(GeminiContent {
+                            role: "user".to_string(),
+                            parts: tool_parts,
+                        });
+                    }
+                } else if !parts.is_empty() {
+                    contents.push(GeminiContent {
+                        role: "model".to_string(),
+                        parts,
+                    });
                 }
             }
             "tool" => {
-                // Tool 响应
+                // tool 消息已经在 assistant 处理时合并了，这里跳过
+                // 但如果前面没有对应的 assistant tool_calls，需要单独处理
                 let tool_id = msg.tool_call_id.clone().unwrap_or_default();
-                let content = msg.get_content_text();
 
-                // 从之前的 model 消息中找到对应的 functionCall name
-                let function_name = find_function_name(&contents, &tool_id);
-
-                let response_value = serde_json::json!({ "output": content });
-
-                let function_response = GeminiPart {
-                    text: None,
-                    inline_data: None,
-                    function_call: None,
-                    function_response: Some(GeminiFunctionResponse {
-                        id: Some(tool_id),
-                        name: function_name,
-                        response: response_value,
-                    }),
-                };
-
-                // 检查是否需要合并到上一条 user 消息
-                let should_merge = if let Some(last) = contents.last() {
-                    last.role == "user" && last.parts.iter().any(|p| p.function_response.is_some())
-                } else {
-                    false
-                };
-
-                if should_merge {
-                    if let Some(last) = contents.last_mut() {
-                        last.parts.push(function_response);
-                    }
-                } else {
-                    contents.push(GeminiContent {
-                        role: "user".to_string(),
-                        parts: vec![function_response],
+                // 检查是否已经被处理过
+                let already_processed = idx > 0
+                    && request.messages[..idx].iter().rev().any(|m| {
+                        m.role == "assistant"
+                            && m.tool_calls
+                                .as_ref()
+                                .map(|tcs| tcs.iter().any(|tc| tc.id == tool_id))
+                                .unwrap_or(false)
                     });
+
+                if !already_processed {
+                    let content = msg.get_content_text();
+                    let function_name = tc_id_to_name.get(&tool_id).cloned().unwrap_or_default();
+
+                    let result_value: serde_json::Value = if content.is_empty() || content == "null"
+                    {
+                        serde_json::json!({})
+                    } else {
+                        serde_json::from_str(&content)
+                            .unwrap_or_else(|_| serde_json::Value::String(content.clone()))
+                    };
+
+                    let function_response = GeminiPart {
+                        text: None,
+                        inline_data: None,
+                        function_call: None,
+                        function_response: Some(GeminiFunctionResponse {
+                            id: Some(tool_id),
+                            name: function_name,
+                            response: GeminiFunctionResponseBody {
+                                result: result_value,
+                            },
+                        }),
+                        thought_signature: None,
+                    };
+
+                    // 检查是否需要合并到上一条 user 消息
+                    let should_merge = contents
+                        .last()
+                        .map(|last| {
+                            last.role == "user"
+                                && last.parts.iter().any(|p| p.function_response.is_some())
+                        })
+                        .unwrap_or(false);
+
+                    if should_merge {
+                        if let Some(last) = contents.last_mut() {
+                            last.parts.push(function_response);
+                        }
+                    } else {
+                        contents.push(GeminiContent {
+                            role: "user".to_string(),
+                            parts: vec![function_response],
+                        });
+                    }
                 }
             }
             _ => {}
@@ -251,62 +511,101 @@ pub fn convert_openai_to_antigravity_with_context(
     }
 
     // 构建生成配置
-    let generation_config = Some(GeminiGenerationConfig {
-        temperature: request.temperature.or(Some(1.0)),
-        max_output_tokens: request.max_tokens.map(|t| t as i32).or(Some(8096)),
-        top_p: Some(0.85),
-        top_k: Some(50),
-        stop_sequences: Some(vec![
-            "<|user|>".to_string(),
-            "<|bot|>".to_string(),
-            "<|context_request|>".to_string(),
-            "<|endoftext|>".to_string(),
-            "<|end_of_turn|>".to_string(),
-        ]),
-        candidate_count: Some(1),
-        thinking_config: Some(ThinkingConfig {
-            include_thoughts: enable_thinking,
-            thinking_budget: if enable_thinking { 1024 } else { 0 },
-        }),
-    });
-
-    // 转换工具
-    let tools = request.tools.as_ref().map(|tools| {
-        tools
-            .iter()
-            .filter_map(|t| {
-                match t {
-                    Tool::Function { function } => Some(GeminiTool {
-                        function_declarations: vec![GeminiFunctionDeclaration {
-                            name: function.name.clone(),
-                            description: function.description.clone(),
-                            parameters: clean_parameters(function.parameters.clone()),
-                        }],
-                    }),
-                    // web_search 工具不转换为 Antigravity 格式
-                    Tool::WebSearch | Tool::WebSearch20250305 => None,
-                }
-            })
-            .collect()
-    });
-
-    let tool_config = if tools.is_some() {
-        Some(serde_json::json!({
-            "functionCallingConfig": {
-                "mode": "VALIDATED"
-            }
-        }))
-    } else {
-        None
+    let mut generation_config = GeminiGenerationConfig {
+        temperature: request.temperature,
+        max_output_tokens: request.max_tokens.map(|t| t as i32),
+        top_p: request.top_p,
+        top_k: None,
+        stop_sequences: None,
+        candidate_count: None,
+        thinking_config: None,
+        response_modalities: None,
     };
+
+    // 处理 reasoning_effort（思维链配置）
+    if supports_thinking {
+        if let Some(ref effort) = request.reasoning_effort {
+            let effort_lower = effort.to_lowercase();
+            if effort_lower != "none" {
+                if model_uses_thinking_levels(actual_model) {
+                    // Gemini 3 使用离散级别
+                    generation_config.thinking_config = Some(ThinkingConfig {
+                        include_thoughts: Some(true),
+                        thinking_budget: None,
+                    });
+                } else {
+                    // Gemini 2.5 使用数值预算
+                    let budget = match effort_lower.as_str() {
+                        "low" => 1024,
+                        "medium" => 8192,
+                        "high" => 24576,
+                        _ => 8192,
+                    };
+                    generation_config.thinking_config = Some(ThinkingConfig {
+                        include_thoughts: Some(true),
+                        thinking_budget: Some(budget),
+                    });
+                }
+            }
+        } else if is_enable_thinking(&request.model) {
+            // 默认启用思维链
+            generation_config.thinking_config = Some(ThinkingConfig {
+                include_thoughts: Some(true),
+                thinking_budget: Some(8192),
+            });
+        }
+    }
+
+    // 转换工具定义
+    let tools: Option<Vec<GeminiTool>> = request.tools.as_ref().and_then(|tools| {
+        let mut function_declarations: Vec<GeminiFunctionDeclaration> = Vec::new();
+
+        for t in tools {
+            match t {
+                Tool::Function { function } => {
+                    // 转换 parameters -> parametersJsonSchema
+                    let params_schema = function.parameters.as_ref().map(|p| {
+                        let mut schema = clean_parameters(Some(p.clone())).unwrap_or_default();
+                        // 确保有 type 和 properties
+                        if schema.get("type").is_none() {
+                            schema["type"] = serde_json::json!("object");
+                        }
+                        if schema.get("properties").is_none() {
+                            schema["properties"] = serde_json::json!({});
+                        }
+                        schema
+                    });
+
+                    function_declarations.push(GeminiFunctionDeclaration {
+                        name: function.name.clone(),
+                        description: function.description.clone(),
+                        parameters_json_schema: params_schema,
+                    });
+                }
+                Tool::WebSearch | Tool::WebSearch20250305 => {
+                    // web_search 工具不转换
+                }
+            }
+        }
+
+        if function_declarations.is_empty() {
+            None
+        } else {
+            Some(vec![GeminiTool {
+                function_declarations: Some(function_declarations),
+                google_search: None,
+            }])
+        }
+    });
 
     let inner = AntigravityRequestInner {
         contents,
         system_instruction,
-        generation_config,
+        generation_config: Some(generation_config),
         tools,
-        tool_config,
+        tool_config: None,
         session_id: Some(generate_session_id()),
+        safety_settings: Some(default_safety_settings()),
     };
 
     // 构建完整的 Antigravity 请求体
@@ -319,21 +618,9 @@ pub fn convert_openai_to_antigravity_with_context(
     })
 }
 
-/// 从之前的 model 消息中找到对应的 functionCall name
-fn find_function_name(contents: &[GeminiContent], tool_id: &str) -> String {
-    for content in contents.iter().rev() {
-        if content.role == "model" {
-            for part in &content.parts {
-                if let Some(fc) = &part.function_call {
-                    if fc.id.as_deref() == Some(tool_id) {
-                        return fc.name.clone();
-                    }
-                }
-            }
-        }
-    }
-    String::new()
-}
+// ============================================================================
+// 辅助转换函数
+// ============================================================================
 
 /// 清理参数中不需要的字段
 fn clean_parameters(params: Option<serde_json::Value>) -> Option<serde_json::Value> {
@@ -349,6 +636,7 @@ fn clean_value(value: serde_json::Value) -> serde_json::Value {
         "minItems",
         "maxItems",
         "uniqueItems",
+        "strict", // Gemini 不支持 strict
     ];
 
     match value {
@@ -383,6 +671,7 @@ fn convert_user_content(msg: &ChatMessage) -> Vec<GeminiPart> {
                 inline_data: None,
                 function_call: None,
                 function_response: None,
+                thought_signature: None,
             });
         }
         Some(MessageContent::Parts(content_parts)) => {
@@ -394,6 +683,7 @@ fn convert_user_content(msg: &ChatMessage) -> Vec<GeminiPart> {
                             inline_data: None,
                             function_call: None,
                             function_response: None,
+                            thought_signature: None,
                         });
                     }
                     ContentPart::ImageUrl { image_url } => {
@@ -407,6 +697,7 @@ fn convert_user_content(msg: &ChatMessage) -> Vec<GeminiPart> {
                                 }),
                                 function_call: None,
                                 function_response: None,
+                                thought_signature: None,
                             });
                         }
                     }
@@ -414,43 +705,6 @@ fn convert_user_content(msg: &ChatMessage) -> Vec<GeminiPart> {
             }
         }
         None => {}
-    }
-
-    parts
-}
-
-/// 转换助手消息内容
-fn convert_assistant_content(msg: &ChatMessage, _contents: &[GeminiContent]) -> Vec<GeminiPart> {
-    let mut parts = Vec::new();
-
-    // 文本内容
-    let text = msg.get_content_text();
-    if !text.is_empty() {
-        parts.push(GeminiPart {
-            text: Some(text.trim_end().to_string()),
-            inline_data: None,
-            function_call: None,
-            function_response: None,
-        });
-    }
-
-    // 工具调用
-    if let Some(tool_calls) = &msg.tool_calls {
-        for tc in tool_calls {
-            let args: serde_json::Value =
-                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
-
-            parts.push(GeminiPart {
-                text: None,
-                inline_data: None,
-                function_call: Some(GeminiFunctionCall {
-                    id: Some(tc.id.clone()),
-                    name: tc.function.name.clone(),
-                    args: serde_json::json!({ "query": args }),
-                }),
-                function_response: None,
-            });
-        }
     }
 
     parts
@@ -470,17 +724,34 @@ fn parse_data_url(url: &str) -> Option<(String, String)> {
     None
 }
 
+// ============================================================================
+// 响应转换函数
+// ============================================================================
+
 /// 将 Antigravity 响应转换为 OpenAI 格式
+///
+/// Antigravity 响应结构：
+/// ```json
+/// {
+///   "response": {
+///     "candidates": [...],
+///     "usageMetadata": {...},
+///     "modelVersion": "...",
+///     "responseId": "..."
+///   }
+/// }
+/// ```
 pub fn convert_antigravity_to_openai_response(
     antigravity_resp: &serde_json::Value,
     model: &str,
 ) -> serde_json::Value {
-    let mut choices = Vec::new();
+    // Antigravity 响应可能在 response 字段下，也可能直接是 Gemini 格式
+    let resp = antigravity_resp.get("response").unwrap_or(antigravity_resp);
 
-    if let Some(candidates) = antigravity_resp
-        .get("candidates")
-        .and_then(|c| c.as_array())
-    {
+    let mut choices = Vec::new();
+    let mut reasoning_content: Option<String> = None;
+
+    if let Some(candidates) = resp.get("candidates").and_then(|c| c.as_array()) {
         for (i, candidate) in candidates.iter().enumerate() {
             let mut content = String::new();
             let mut tool_calls: Vec<serde_json::Value> = Vec::new();
@@ -491,19 +762,87 @@ pub fn convert_antigravity_to_openai_response(
                 .and_then(|p| p.as_array())
             {
                 for part in parts {
-                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                        content.push_str(text);
+                    // 检查是否是思维内容
+                    let is_thought = part
+                        .get("thought")
+                        .and_then(|t| t.as_bool())
+                        .unwrap_or(false);
+
+                    // 跳过纯 thoughtSignature 部分
+                    let has_thought_signature = part
+                        .get("thoughtSignature")
+                        .or_else(|| part.get("thought_signature"))
+                        .and_then(|s| s.as_str())
+                        .map(|s| !s.is_empty())
+                        .unwrap_or(false);
+
+                    let has_content = part.get("text").is_some()
+                        || part.get("functionCall").is_some()
+                        || part.get("inlineData").is_some();
+
+                    if has_thought_signature && !has_content {
+                        continue;
                     }
+
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        if is_thought {
+                            // 思维内容
+                            if let Some(ref mut rc) = reasoning_content {
+                                rc.push_str(text);
+                            } else {
+                                reasoning_content = Some(text.to_string());
+                            }
+                        } else {
+                            content.push_str(text);
+                        }
+                    }
+
                     if let Some(fc) = part.get("functionCall") {
-                        let call_id = format!("call_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                        // 优先使用响应中的 id，否则生成新的
+                        let call_id = fc
+                            .get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| {
+                                format!("call_{}", &uuid::Uuid::new_v4().to_string()[..8])
+                            });
+
+                        let default_args = serde_json::json!({});
+                        let args = fc.get("args").unwrap_or(&default_args);
+                        let args_str = if args.is_string() {
+                            args.as_str().unwrap_or("{}").to_string()
+                        } else {
+                            serde_json::to_string(args).unwrap_or_default()
+                        };
+
                         tool_calls.push(serde_json::json!({
                             "id": call_id,
                             "type": "function",
                             "function": {
                                 "name": fc.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                                "arguments": serde_json::to_string(fc.get("args").unwrap_or(&serde_json::json!({}))).unwrap_or_default()
+                                "arguments": args_str
                             }
                         }));
+                    }
+
+                    // 处理图片输出
+                    if let Some(inline_data) =
+                        part.get("inlineData").or_else(|| part.get("inline_data"))
+                    {
+                        if let Some(data) = inline_data.get("data").and_then(|d| d.as_str()) {
+                            let mime_type = inline_data
+                                .get("mimeType")
+                                .or_else(|| inline_data.get("mime_type"))
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("image/png");
+
+                            // 将图片作为 data URL 添加到内容中
+                            let image_url = format!("data:{};base64,{}", mime_type, data);
+                            if !content.is_empty() {
+                                content.push_str("\n\n");
+                            }
+                            content.push_str(&format!("![image]({})", image_url));
+                        }
                     }
                 }
             }
@@ -511,19 +850,27 @@ pub fn convert_antigravity_to_openai_response(
             let finish_reason = candidate
                 .get("finishReason")
                 .and_then(|r| r.as_str())
-                .map(|r| match r {
+                .map(|r| match r.to_uppercase().as_str() {
                     "STOP" => "stop",
                     "MAX_TOKENS" => "length",
                     "SAFETY" => "content_filter",
                     "RECITATION" => "content_filter",
                     _ => "stop",
                 })
-                .unwrap_or("stop");
+                .unwrap_or(if !tool_calls.is_empty() {
+                    "tool_calls"
+                } else {
+                    "stop"
+                });
 
             let mut message = serde_json::json!({
                 "role": "assistant",
                 "content": if content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(content) }
             });
+
+            if let Some(ref rc) = reasoning_content {
+                message["reasoning_content"] = serde_json::Value::String(rc.clone());
+            }
 
             if !tool_calls.is_empty() {
                 message["tool_calls"] = serde_json::json!(tool_calls);
@@ -538,16 +885,58 @@ pub fn convert_antigravity_to_openai_response(
     }
 
     // 构建 usage
-    let usage = antigravity_resp.get("usageMetadata").map(|u| {
-        serde_json::json!({
-            "prompt_tokens": u.get("promptTokenCount").and_then(|t| t.as_i64()).unwrap_or(0),
-            "completion_tokens": u.get("candidatesTokenCount").and_then(|t| t.as_i64()).unwrap_or(0),
-            "total_tokens": u.get("totalTokenCount").and_then(|t| t.as_i64()).unwrap_or(0)
-        })
+    let usage = resp.get("usageMetadata").map(|u| {
+        let prompt_tokens = u
+            .get("promptTokenCount")
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let completion_tokens = u
+            .get("candidatesTokenCount")
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let total_tokens = u
+            .get("totalTokenCount")
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let thoughts_tokens = u
+            .get("thoughtsTokenCount")
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let cached_tokens = u
+            .get("cachedContentTokenCount")
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+
+        let mut usage_obj = serde_json::json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens
+        });
+
+        if thoughts_tokens > 0 {
+            usage_obj["completion_tokens_details"] = serde_json::json!({
+                "reasoning_tokens": thoughts_tokens
+            });
+        }
+
+        if cached_tokens > 0 {
+            usage_obj["prompt_tokens_details"] = serde_json::json!({
+                "cached_tokens": cached_tokens
+            });
+        }
+
+        usage_obj
     });
 
+    // 获取响应 ID
+    let response_id = resp
+        .get("responseId")
+        .and_then(|id| id.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
+
     let mut response = serde_json::json!({
-        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+        "id": response_id,
         "object": "chat.completion",
         "created": chrono::Utc::now().timestamp(),
         "model": model,
