@@ -1,4 +1,5 @@
 import type { ToolCallState, TokenUsage } from "@/lib/api/agent";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface MessageImage {
   data: string;
@@ -60,6 +61,14 @@ export const PROVIDER_CONFIG: Record<
       "claude-sonnet-4-20250514",
     ],
   },
+  anthropic: {
+    label: "Anthropic",
+    models: [
+      "claude-opus-4-5-20251101",
+      "claude-sonnet-4-5-20250929",
+      "claude-sonnet-4-20250514",
+    ],
+  },
   kiro: {
     label: "Kiro",
     models: ["claude-sonnet-4-5-20250929", "claude-sonnet-4-20250514"],
@@ -109,3 +118,41 @@ export const PROVIDER_CONFIG: Record<
     ],
   },
 };
+
+// ============ 动态模型配置 API ============
+
+/** 简化的 Provider 配置（从后端返回） */
+export interface SimpleProviderConfig {
+  label: string;
+  models: string[];
+}
+
+/** Provider 配置映射类型 */
+export type ProviderConfigMap = Record<string, SimpleProviderConfig>;
+
+/**
+ * 从后端获取所有 Provider 的模型配置
+ * 如果获取失败，返回默认的 PROVIDER_CONFIG
+ */
+export async function getProviderConfig(): Promise<ProviderConfigMap> {
+  try {
+    const config = await invoke<ProviderConfigMap>("get_all_provider_models");
+    return config;
+  } catch (error) {
+    console.warn("获取模型配置失败，使用默认配置:", error);
+    return PROVIDER_CONFIG;
+  }
+}
+
+/**
+ * 获取指定 Provider 的模型列表
+ */
+export async function getProviderModels(provider: string): Promise<string[]> {
+  try {
+    const models = await invoke<string[]>("get_provider_models", { provider });
+    return models;
+  } catch (error) {
+    console.warn(`获取 ${provider} 模型列表失败:`, error);
+    return PROVIDER_CONFIG[provider]?.models ?? [];
+  }
+}

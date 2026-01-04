@@ -186,10 +186,10 @@ export const ImportExportDialog: React.FC<ImportExportDialogProps> = ({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent
-        className="sm:max-w-[600px]"
+        className="sm:max-w-[600px] p-6"
         data-testid="import-export-dialog"
       >
-        <DialogHeader>
+        <DialogHeader className="mb-4">
           <DialogTitle>导入/导出 Provider 配置</DialogTitle>
           <DialogDescription>
             导出当前 Provider 配置或从文件导入配置
@@ -199,6 +199,7 @@ export const ImportExportDialog: React.FC<ImportExportDialogProps> = ({
         <Tabs
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as TabValue)}
+          className="w-full"
         >
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="export" data-testid="export-tab">
@@ -361,7 +362,7 @@ export const ImportExportDialog: React.FC<ImportExportDialogProps> = ({
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="mt-6 pt-4 border-t">
           <Button
             variant="outline"
             onClick={handleClose}

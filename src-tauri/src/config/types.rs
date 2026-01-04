@@ -311,6 +311,9 @@ pub struct Config {
     /// 关闭时最小化到托盘（而不是退出应用）
     #[serde(default = "default_minimize_to_tray")]
     pub minimize_to_tray: bool,
+    /// 模型配置（动态加载 Provider 和模型列表）
+    #[serde(default)]
+    pub models: ModelsConfig,
 }
 
 fn default_minimize_to_tray() -> bool {
@@ -712,6 +715,317 @@ impl Default for LoggingConfig {
     }
 }
 
+// ============ 模型配置类型 ============
+
+/// 模型信息
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelInfo {
+    /// 模型 ID
+    pub id: String,
+    /// 模型显示名称（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 是否启用
+    #[serde(default = "default_model_enabled")]
+    pub enabled: bool,
+}
+
+fn default_model_enabled() -> bool {
+    true
+}
+
+/// Provider 模型配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderModelsConfig {
+    /// Provider 显示标签
+    pub label: String,
+    /// 模型列表
+    #[serde(default)]
+    pub models: Vec<ModelInfo>,
+}
+
+/// 模型配置（顶层）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelsConfig {
+    /// 是否从 models.dev 获取模型列表（预留功能）
+    #[serde(default)]
+    pub fetch_from_models_dev: bool,
+    /// models.dev 缓存 TTL（秒）
+    #[serde(default = "default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+    /// Provider 模型配置
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderModelsConfig>,
+}
+
+fn default_cache_ttl_secs() -> u64 {
+    3600
+}
+
+impl Default for ModelsConfig {
+    fn default() -> Self {
+        let mut providers = HashMap::new();
+
+        // Claude (直连 Anthropic API)
+        providers.insert(
+            "claude".to_string(),
+            ProviderModelsConfig {
+                label: "Claude".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-opus-4-5-20251101".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-20250514".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Anthropic (API Key Provider)
+        providers.insert(
+            "anthropic".to_string(),
+            ProviderModelsConfig {
+                label: "Anthropic".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-opus-4-5-20251101".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-20250514".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Kiro
+        providers.insert(
+            "kiro".to_string(),
+            ProviderModelsConfig {
+                label: "Kiro".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-20250514".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // OpenAI
+        providers.insert(
+            "openai".to_string(),
+            ProviderModelsConfig {
+                label: "OpenAI".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "gpt-4o".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gpt-4o-mini".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gpt-4-turbo".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o1".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o1-mini".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o3".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o3-mini".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Gemini
+        providers.insert(
+            "gemini".to_string(),
+            ProviderModelsConfig {
+                label: "Gemini".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "gemini-2.0-flash-exp".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-1.5-pro".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-1.5-flash".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Qwen
+        providers.insert(
+            "qwen".to_string(),
+            ProviderModelsConfig {
+                label: "通义千问".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "qwen-max".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "qwen-plus".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "qwen-turbo".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Codex
+        providers.insert(
+            "codex".to_string(),
+            ProviderModelsConfig {
+                label: "Codex".to_string(),
+                models: vec![ModelInfo {
+                    id: "codex-mini-latest".to_string(),
+                    name: None,
+                    enabled: true,
+                }],
+            },
+        );
+
+        // Claude OAuth
+        providers.insert(
+            "claude_oauth".to_string(),
+            ProviderModelsConfig {
+                label: "Claude OAuth".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-3-5-sonnet-20241022".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // iFlow
+        providers.insert(
+            "iflow".to_string(),
+            ProviderModelsConfig {
+                label: "iFlow".to_string(),
+                models: vec![],
+            },
+        );
+
+        // Antigravity
+        providers.insert(
+            "antigravity".to_string(),
+            ProviderModelsConfig {
+                label: "Antigravity".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "gemini-3-pro-preview".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-3-pro-image-preview".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-3-flash-preview".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-2.5-computer-use-preview-10-2025".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-claude-sonnet-4-5".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-claude-sonnet-4-5-thinking".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-claude-opus-4-5-thinking".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        Self {
+            fetch_from_models_dev: false,
+            cache_ttl_secs: default_cache_ttl_secs(),
+            providers,
+        }
+    }
+}
+
 /// 参数注入配置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InjectionSettings {
@@ -801,6 +1115,7 @@ impl Default for Config {
             ampcode: AmpConfig::default(),
             endpoint_providers: EndpointProvidersConfig::default(),
             minimize_to_tray: default_minimize_to_tray(),
+            models: ModelsConfig::default(),
         }
     }
 }

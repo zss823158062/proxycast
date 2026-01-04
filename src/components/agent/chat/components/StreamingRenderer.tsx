@@ -5,7 +5,7 @@
  * Requirements: 9.3, 9.4
  */
 
-import React, { memo, useMemo } from "react";
+import React, { memo, useMemo, useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { ChevronDown, Lightbulb } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -59,6 +59,121 @@ const StreamingCursor: React.FC = () => (
     style={{ animationDuration: "1s" }}
   />
 );
+
+// ============ 流式文本组件（逐字符动画） ============
+
+interface StreamingTextProps {
+  /** 目标文本（完整内容） */
+  text: string;
+  /** 是否正在流式输出 */
+  isStreaming: boolean;
+  /** 是否显示光标 */
+  showCursor?: boolean;
+  /** 每个字符的渲染间隔（毫秒），默认 12ms */
+  charInterval?: number;
+}
+
+/**
+ * 流式文本组件
+ *
+ * 实现逐字符平滑显示效果，类似 ChatGPT/Claude 的打字机效果。
+ * 当流式结束时，立即显示完整文本。
+ */
+const StreamingText: React.FC<StreamingTextProps> = memo(
+  ({ text, isStreaming, showCursor = true, charInterval = 12 }) => {
+    const [displayText, setDisplayText] = useState("");
+    const displayIndexRef = useRef(0);
+    const animationRef = useRef<number | null>(null);
+    const prevTextRef = useRef("");
+
+    useEffect(() => {
+      // 如果不是流式输出，直接显示完整文本
+      if (!isStreaming) {
+        setDisplayText(text);
+        displayIndexRef.current = text.length;
+        prevTextRef.current = text;
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+          animationRef.current = null;
+        }
+        return;
+      }
+
+      // 检测文本是否有新增
+      if (text.length <= prevTextRef.current.length) {
+        prevTextRef.current = text;
+        return;
+      }
+
+      prevTextRef.current = text;
+
+      // 如果已经有动画在运行，让它继续
+      if (animationRef.current !== null) {
+        return;
+      }
+
+      let lastTime = 0;
+
+      const animate = (currentTime: number) => {
+        if (!lastTime) lastTime = currentTime;
+        const elapsed = currentTime - lastTime;
+
+        if (elapsed >= charInterval) {
+          // 计算这一帧应该显示多少个字符
+          const charsToAdd = Math.max(1, Math.floor(elapsed / charInterval));
+          const newIndex = Math.min(
+            displayIndexRef.current + charsToAdd,
+            text.length,
+          );
+
+          if (newIndex > displayIndexRef.current) {
+            displayIndexRef.current = newIndex;
+            setDisplayText(text.slice(0, newIndex));
+          }
+
+          lastTime = currentTime;
+        }
+
+        // 继续动画直到追上目标
+        if (displayIndexRef.current < text.length) {
+          animationRef.current = requestAnimationFrame(animate);
+        } else {
+          animationRef.current = null;
+        }
+      };
+
+      animationRef.current = requestAnimationFrame(animate);
+
+      return () => {
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+          animationRef.current = null;
+        }
+      };
+    }, [text, isStreaming, charInterval]);
+
+    // 组件卸载时清理
+    useEffect(() => {
+      return () => {
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+        }
+      };
+    }, []);
+
+    const shouldShowCursor =
+      isStreaming && showCursor && displayIndexRef.current < text.length;
+
+    return (
+      <div className="relative">
+        <MarkdownRenderer content={displayText} />
+        {shouldShowCursor && <StreamingCursor />}
+      </div>
+    );
+  },
+);
+
+StreamingText.displayName = "StreamingText";
 
 // ============ 思考内容解析 ============
 
@@ -186,11 +301,14 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
               if (!partVisible) return null;
 
               const isLastPart = index === contentParts.length - 1;
+              // 使用 StreamingText 组件实现逐字符动画
               return (
-                <div key={`text-${index}`} className="relative">
-                  <MarkdownRenderer content={partVisible} />
-                  {isLastPart && shouldShowCursor && <StreamingCursor />}
-                </div>
+                <StreamingText
+                  key={`text-${index}`}
+                  text={partVisible}
+                  isStreaming={isStreaming && isLastPart}
+                  showCursor={shouldShowCursor && isLastPart}
+                />
               );
             } else if (part.type === "tool_use") {
               // 渲染单个工具调用
@@ -230,12 +348,13 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
         {/* 工具调用区域 */}
         {hasToolCalls && <ToolCallList toolCalls={toolCalls} />}
 
-        {/* 文本内容区域 */}
+        {/* 文本内容区域 - 使用 StreamingText 组件实现逐字符动画 */}
         {visibleText.length > 0 && (
-          <div className="relative">
-            <MarkdownRenderer content={visibleText} />
-            {shouldShowCursor && <StreamingCursor />}
-          </div>
+          <StreamingText
+            text={visibleText}
+            isStreaming={isStreaming}
+            showCursor={shouldShowCursor}
+          />
         )}
 
         {/* 如果没有内容但正在流式输出，显示光标 */}

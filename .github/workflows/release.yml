@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  packages: write
+  actions: read
 
 env:
   CARGO_INCREMENTAL: 0

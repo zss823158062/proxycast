@@ -780,296 +780,128 @@ pub async fn call_provider_anthropic(
         }
         // Anthropic API Key - 根据 base_url 决定调用方式
         CredentialData::AnthropicKey { api_key, base_url } => {
-            // 如果有自定义 base_url，假设是 OpenAI 兼容的代理服务器
-            // 需要将 Anthropic 请求转换为 OpenAI 请求，然后将响应转换回来
-            if let Some(custom_url) = base_url {
-                state.logs.write().await.add(
-                    "info",
-                    &format!(
-                        "[ANTHROPIC_COMPAT] 使用 OpenAI 兼容 API: base_url={} credential_uuid={} stream={}",
-                        custom_url,
-                        &credential.uuid[..8],
-                        request.stream
-                    ),
-                );
+            // 使用 Anthropic 原生格式调用（无论是否有自定义 base_url）
+            let claude = ClaudeCustomProvider::with_config(api_key.clone(), base_url.clone());
+            let request_url = claude.get_base_url();
+            state.logs.write().await.add(
+                "info",
+                &format!(
+                    "[ANTHROPIC] 使用 Anthropic API: base_url={} credential_uuid={} stream={}",
+                    request_url,
+                    &credential.uuid[..8],
+                    request.stream
+                ),
+            );
+            match claude.call_api(request).await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    state.logs.write().await.add(
+                        "info",
+                        &format!(
+                            "[ANTHROPIC] 响应状态: status={} model={} stream={}",
+                            status,
+                            request.model,
+                            request.stream
+                        ),
+                    );
 
-                // 将 Anthropic 请求转换为 OpenAI 请求
-                let openai_request = crate::converter::anthropic_to_openai::convert_anthropic_to_openai(request);
-
-                // 使用 OpenAI 兼容 API 调用
-                let openai = OpenAICustomProvider::with_config(api_key.clone(), Some(custom_url.clone()));
-                match openai.call_api(&openai_request).await {
-                    Ok(resp) => {
-                        let status = resp.status();
+                    // 如果是流式请求，直接透传流式响应
+                    if request.stream && status.is_success() {
                         state.logs.write().await.add(
                             "info",
-                            &format!(
-                                "[ANTHROPIC_COMPAT] 响应状态: status={} model={} stream={}",
-                                status,
-                                request.model,
-                                request.stream
-                            ),
+                            "[ANTHROPIC] 流式请求，透传 SSE 响应",
                         );
-
-                        // 流式请求暂不支持格式转换，直接透传 OpenAI SSE 格式
-                        // TODO: 实现 OpenAI SSE -> Anthropic SSE 的流式转换
-                        if request.stream && status.is_success() {
-                            state.logs.write().await.add(
-                                "info",
-                                "[ANTHROPIC_COMPAT] 流式请求，透传 OpenAI SSE 响应（暂不支持格式转换）",
-                            );
-                            if let Some(db) = &state.db {
-                                let _ = state.pool_service.mark_healthy(
-                                    db,
-                                    &credential.uuid,
-                                    Some(&request.model),
-                                );
-                                let _ = state.pool_service.record_usage(db, &credential.uuid);
-                            }
-
-                            // 直接透传 OpenAI SSE 流
-                            let stream = resp.bytes_stream();
-                            return Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "text/event-stream")
-                                .header(header::CACHE_CONTROL, "no-cache")
-                                .header("Connection", "keep-alive")
-                                .body(Body::from_stream(stream))
-                                .unwrap_or_else(|_| {
-                                    (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        Json(serde_json::json!({"error": {"message": "Failed to build stream response"}})),
-                                    )
-                                        .into_response()
-                                });
-                        }
-
-                        // 非流式响应需要转换格式
-                        if status.is_success() {
-                            if let Some(db) = &state.db {
-                                let _ = state.pool_service.mark_healthy(
-                                    db,
-                                    &credential.uuid,
-                                    Some(&request.model),
-                                );
-                                let _ = state.pool_service.record_usage(db, &credential.uuid);
-                            }
-                        } else {
-                            if let Some(db) = &state.db {
-                                let _ = state.pool_service.mark_unhealthy(
-                                    db,
-                                    &credential.uuid,
-                                    Some(&format!("API error: {}", status)),
-                                );
-                            }
-                        }
-
-                        match resp.text().await {
-                            Ok(body) => {
-                                if status.is_success() {
-                                    // 将 OpenAI 响应转换为 Anthropic 响应
-                                    match serde_json::from_str::<crate::models::openai::ChatCompletionResponse>(&body) {
-                                        Ok(openai_resp) => {
-                                            let anthropic_resp = convert_openai_response_to_anthropic(&openai_resp, &request.model);
-                                            Response::builder()
-                                                .status(StatusCode::OK)
-                                                .header(header::CONTENT_TYPE, "application/json")
-                                                .body(Body::from(serde_json::to_string(&anthropic_resp).unwrap_or_default()))
-                                                .unwrap_or_else(|_| {
-                                                    (
-                                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                                        Json(serde_json::json!({"error": {"message": "Failed to build response"}})),
-                                                    )
-                                                        .into_response()
-                                                })
-                                        }
-                                        Err(e) => {
-                                            state.logs.write().await.add(
-                                                "error",
-                                                &format!("[ANTHROPIC_COMPAT] 解析 OpenAI 响应失败: {}", e),
-                                            );
-                                            // 返回原始响应
-                                            Response::builder()
-                                                .status(StatusCode::OK)
-                                                .header(header::CONTENT_TYPE, "application/json")
-                                                .body(Body::from(body))
-                                                .unwrap_or_else(|_| {
-                                                    (
-                                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                                        Json(serde_json::json!({"error": {"message": "Failed to build response"}})),
-                                                    )
-                                                        .into_response()
-                                                })
-                                        }
-                                    }
-                                } else {
-                                    (
-                                        StatusCode::from_u16(status.as_u16())
-                                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                                        Json(serde_json::json!({"error": {"message": body}})),
-                                    )
-                                        .into_response()
-                                }
-                            }
-                            Err(e) => (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({"error": {"message": format!("Failed to read response: {}", e)}})),
-                            )
-                                .into_response(),
-                        }
-                    }
-                    Err(e) => {
                         if let Some(db) = &state.db {
-                            let _ = state.pool_service.mark_unhealthy(
+                            let _ = state.pool_service.mark_healthy(
                                 db,
                                 &credential.uuid,
-                                Some(&format!("API call failed: {}", e)),
+                                Some(&request.model),
                             );
+                            let _ = state.pool_service.record_usage(db, &credential.uuid);
                         }
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({"error": {"message": format!("OpenAI compatible API call failed: {}", e)}})),
-                        )
-                            .into_response()
+                        let stream = resp.bytes_stream();
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "text/event-stream")
+                            .header(header::CACHE_CONTROL, "no-cache")
+                            .header("Connection", "keep-alive")
+                            .body(Body::from_stream(stream))
+                            .unwrap_or_else(|_| {
+                                (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({"error": {"message": "Failed to build stream response"}})),
+                                )
+                                    .into_response()
+                            });
                     }
-                }
-            } else {
-                // 没有自定义 base_url，使用原生 Anthropic API
-                let claude = ClaudeCustomProvider::with_config(api_key.clone(), None);
-                let request_url = claude.get_base_url();
-                state.logs.write().await.add(
-                    "info",
-                    &format!(
-                        "[ANTHROPIC] 使用 Anthropic API: base_url=https://api.anthropic.com -> {}/v1/messages credential_uuid={} stream={}",
-                        request_url,
-                        &credential.uuid[..8],
-                        request.stream
-                    ),
-                );
-                match claude.call_api(request).await {
-                    Ok(resp) => {
-                        let status = resp.status();
-                        state.logs.write().await.add(
-                            "info",
-                            &format!(
-                                "[ANTHROPIC] 响应状态: status={} model={} stream={}",
-                                status,
-                                request.model,
-                                request.stream
-                            ),
-                        );
 
-                        // 如果是流式请求，直接透传流式响应
-                        if request.stream && status.is_success() {
-                            state.logs.write().await.add(
-                                "info",
-                                "[ANTHROPIC] 流式请求，透传 SSE 响应",
-                            );
-                            if let Some(db) = &state.db {
-                                let _ = state.pool_service.mark_healthy(
-                                    db,
-                                    &credential.uuid,
-                                    Some(&request.model),
-                                );
-                                let _ = state.pool_service.record_usage(db, &credential.uuid);
-                            }
-                            let stream = resp.bytes_stream();
-                            return Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "text/event-stream")
-                                .header(header::CACHE_CONTROL, "no-cache")
-                                .header("Connection", "keep-alive")
-                                .body(Body::from_stream(stream))
-                                .unwrap_or_else(|_| {
-                                    (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        Json(serde_json::json!({"error": {"message": "Failed to build stream response"}})),
-                                    )
-                                        .into_response()
-                                });
-                        }
-
-                        // 非流式请求，读取完整响应
-                        match resp.text().await {
-                            Ok(body) => {
-                                if status.is_success() {
-                                    if let Some(db) = &state.db {
-                                        let _ = state.pool_service.mark_healthy(
-                                            db,
-                                            &credential.uuid,
-                                            Some(&request.model),
-                                        );
-                                        let _ = state.pool_service.record_usage(db, &credential.uuid);
-                                    }
-                                    Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "application/json")
-                                        .body(Body::from(body))
-                                        .unwrap_or_else(|_| {
-                                            (
-                                                StatusCode::INTERNAL_SERVER_ERROR,
-                                                Json(serde_json::json!({"error": {"message": "Failed to build response"}})),
-                                            )
-                                                .into_response()
-                                        })
-                                } else {
-                                    state.logs.write().await.add(
-                                        "error",
-                                        &format!(
-                                            "[ANTHROPIC] 请求失败: status={} body={}",
-                                            status,
-                                            &body.chars().take(200).collect::<String>()
-                                        ),
+                    // 非流式请求，读取完整响应
+                    match resp.text().await {
+                        Ok(body) => {
+                            if status.is_success() {
+                                if let Some(db) = &state.db {
+                                    let _ = state.pool_service.mark_healthy(
+                                        db,
+                                        &credential.uuid,
+                                        Some(&request.model),
                                     );
-                                    if let Some(db) = &state.db {
-                                        let _ = state.pool_service.mark_unhealthy(
-                                            db,
-                                            &credential.uuid,
-                                            Some(&body),
-                                        );
-                                    }
-                                    (
-                                        StatusCode::from_u16(status.as_u16())
-                                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                                        Json(serde_json::json!({"error": {"message": body}})),
-                                    )
-                                        .into_response()
+                                    let _ = state.pool_service.record_usage(db, &credential.uuid);
                                 }
-                            }
-                            Err(e) => {
+                                Response::builder()
+                                    .status(StatusCode::OK)
+                                    .header(header::CONTENT_TYPE, "application/json")
+                                    .body(Body::from(body))
+                                    .unwrap_or_else(|_| {
+                                        (
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            Json(serde_json::json!({"error": {"message": "Failed to build response"}})),
+                                        )
+                                            .into_response()
+                                    })
+                            } else {
                                 state.logs.write().await.add(
                                     "error",
-                                    &format!("[ANTHROPIC] 读取响应失败: {}", e),
+                                    &format!(
+                                        "[ANTHROPIC] 请求失败: status={} body={}",
+                                        status,
+                                        &body[..body.len().min(500)]
+                                    ),
                                 );
                                 if let Some(db) = &state.db {
                                     let _ = state.pool_service.mark_unhealthy(
                                         db,
                                         &credential.uuid,
-                                        Some(&e.to_string()),
+                                        Some(&format!("API error: {}", status)),
                                     );
                                 }
                                 (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(serde_json::json!({"error": {"message": e.to_string()}})),
+                                    StatusCode::from_u16(status.as_u16())
+                                        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                                    Json(serde_json::json!({"error": {"message": body}})),
                                 )
                                     .into_response()
                             }
                         }
-                    }
-                    Err(e) => {
-                        if let Some(db) = &state.db {
-                            let _ = state.pool_service.mark_unhealthy(
-                                db,
-                                &credential.uuid,
-                                Some(&e.to_string()),
-                            );
-                        }
-                        (
+                        Err(e) => (
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({"error": {"message": e.to_string()}})),
+                            Json(serde_json::json!({"error": {"message": format!("Failed to read response: {}", e)}})),
                         )
-                            .into_response()
+                            .into_response(),
                     }
+                }
+                Err(e) => {
+                    if let Some(db) = &state.db {
+                        let _ = state.pool_service.mark_unhealthy(
+                            db,
+                            &credential.uuid,
+                            Some(&format!("API call failed: {}", e)),
+                        );
+                    }
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": {"message": format!("Anthropic API call failed: {}", e)}})),
+                    )
+                        .into_response()
                 }
             }
         }

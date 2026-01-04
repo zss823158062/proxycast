@@ -14,7 +14,14 @@ import {
   type SessionInfo,
   type StreamEvent,
 } from "@/lib/api/agent";
-import { Message, MessageImage, ContentPart, PROVIDER_CONFIG } from "../types";
+import {
+  Message,
+  MessageImage,
+  ContentPart,
+  PROVIDER_CONFIG,
+  getProviderConfig,
+  type ProviderConfigMap,
+} from "../types";
 
 /** 话题（会话）信息 */
 export interface Topic {
@@ -78,6 +85,11 @@ export function useAgentChat() {
     running: false,
   });
 
+  // 动态模型配置（从后端加载）
+  const [providerConfig, setProviderConfig] =
+    useState<ProviderConfigMap>(PROVIDER_CONFIG);
+  const [isConfigLoading, setIsConfigLoading] = useState(true);
+
   // Configuration State (Persistent)
   const defaultProvider = "claude";
   const defaultModel = PROVIDER_CONFIG["claude"]?.models[0] || "";
@@ -101,6 +113,21 @@ export function useAgentChat() {
   const [topics, setTopics] = useState<Topic[]>([]);
 
   const [isSending, setIsSending] = useState(false);
+
+  // 加载动态模型配置
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const config = await getProviderConfig();
+        setProviderConfig(config);
+      } catch (error) {
+        console.warn("加载模型配置失败，使用默认配置:", error);
+      } finally {
+        setIsConfigLoading(false);
+      }
+    };
+    loadConfig();
+  }, []);
 
   // Persistence Effects
   useEffect(() => {
@@ -564,6 +591,8 @@ export function useAgentChat() {
     setProviderType,
     model,
     setModel,
+    providerConfig, // 动态模型配置
+    isConfigLoading, // 配置加载状态
 
     // Chat
     messages,

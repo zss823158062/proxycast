@@ -814,6 +814,16 @@ pub fn run() {
             commands::native_agent_cmd::native_agent_get_session,
             commands::native_agent_cmd::native_agent_delete_session,
             commands::native_agent_cmd::native_agent_list_sessions,
+            // Models config commands
+            commands::models_cmd::get_models_config,
+            commands::models_cmd::save_models_config,
+            commands::models_cmd::get_provider_models,
+            commands::models_cmd::get_all_provider_models,
+            commands::models_cmd::add_model_to_provider,
+            commands::models_cmd::remove_model_from_provider,
+            commands::models_cmd::toggle_model_enabled,
+            commands::models_cmd::add_provider,
+            commands::models_cmd::remove_provider,
             // Network commands
             commands::network_cmd::get_network_info,
             // OAuth Plugin commands
