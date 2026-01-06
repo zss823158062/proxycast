@@ -22,7 +22,6 @@ pub mod prompt_cmd;
 pub mod provider_pool_cmd;
 pub mod resilience_cmd;
 pub mod route_cmd;
-pub mod router_cmd;
 pub mod skill_cmd;
 pub mod switch_cmd;
 pub mod telemetry_cmd;

@@ -53,7 +53,6 @@ pub fn run() {
         credential_sync_service: credential_sync_service_state,
         token_cache_service: token_cache_service_state,
         machine_id_service: machine_id_service_state,
-        router_config: router_config_state,
         resilience_config: resilience_config_state,
         plugin_manager: plugin_manager_state,
         plugin_installer: plugin_installer_state,
@@ -72,6 +71,7 @@ pub fn run() {
         orchestrator: orchestrator_state,
         connect_state: connect_state,
         model_registry: model_registry_state,
+        global_config_manager: global_config_manager_state,
         shared_stats,
         shared_tokens,
         shared_logger,
@@ -128,7 +128,6 @@ pub fn run() {
         .manage(credential_sync_service_state)
         .manage(token_cache_service_state)
         .manage(machine_id_service_state)
-        .manage(router_config_state)
         .manage(resilience_config_state)
         .manage(telemetry_state)
         .manage(plugin_manager_state)
@@ -147,6 +146,7 @@ pub fn run() {
         .manage(orchestrator_state)
         .manage(connect_state)
         .manage(model_registry_state)
+        .manage(global_config_manager_state)
         .on_window_event(move |window, event| {
             // 处理窗口关闭事件
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -190,6 +190,14 @@ pub fn run() {
                         TrayManagerState(Arc::new(tokio::sync::RwLock::new(None)));
                     app.manage(tray_state);
                 }
+            }
+
+            // 设置 GlobalConfigManager 的 AppHandle（用于向前端发送事件）
+            if let Some(config_manager) =
+                app.try_state::<crate::config::GlobalConfigManagerState>()
+            {
+                config_manager.0.set_app_handle(app.handle().clone());
+                tracing::info!("[启动] GlobalConfigManager AppHandle 已设置");
             }
 
             // 初始化 Connect 状态
@@ -686,16 +694,6 @@ pub fn run() {
             // Route commands
             commands::route_cmd::get_available_routes,
             commands::route_cmd::get_route_curl_examples,
-            // Router config commands
-            commands::router_cmd::get_routing_rules,
-            commands::router_cmd::add_routing_rule,
-            commands::router_cmd::remove_routing_rule,
-            commands::router_cmd::update_routing_rule,
-            commands::router_cmd::get_exclusions,
-            commands::router_cmd::add_exclusion,
-            commands::router_cmd::remove_exclusion,
-            commands::router_cmd::set_router_default_provider,
-            commands::router_cmd::clear_all_routing_config,
             // Resilience config commands
             commands::resilience_cmd::get_retry_config,
             commands::resilience_cmd::update_retry_config,
@@ -1019,6 +1017,8 @@ pub fn run() {
             commands::model_registry_cmd::get_model_sync_state,
             commands::model_registry_cmd::get_models_for_provider,
             commands::model_registry_cmd::get_models_by_tier,
+            commands::model_registry_cmd::get_provider_alias_config,
+            commands::model_registry_cmd::get_all_alias_configs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

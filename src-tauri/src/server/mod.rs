@@ -3,8 +3,8 @@
 pub mod client_detector;
 
 use crate::config::{
-    Config, ConfigChangeEvent, ConfigChangeKind, ConfigManager, EndpointProvidersConfig,
-    FileWatcher, HotReloadManager, ReloadResult,
+    Config, ConfigChangeKind, ConfigManager, EndpointProvidersConfig, FileChangeEvent, FileWatcher,
+    HotReloadManager, ReloadResult,
 };
 use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
 use crate::credential::CredentialSyncService;
@@ -165,6 +165,8 @@ pub struct ServerState {
     pub openai_custom_provider: OpenAICustomProvider,
     pub claude_custom_provider: ClaudeCustomProvider,
     pub default_provider_ref: Arc<RwLock<String>>,
+    /// 路由器引用（用于动态更新默认 Provider）
+    pub router_ref: Option<Arc<RwLock<crate::router::Router>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     /// 服务器运行时使用的 API key（启动时从配置复制）
     /// 用于 test_api 命令，确保测试使用的 API key 和服务器一致
@@ -191,6 +193,7 @@ impl ServerState {
             openai_custom_provider: openai_custom,
             claude_custom_provider: claude_custom,
             default_provider_ref,
+            router_ref: None,
             shutdown_tx: None,
             running_api_key: None,
         }
@@ -299,6 +302,32 @@ impl ServerState {
         let config = self.config.clone();
         let config_path = crate::config::ConfigManager::default_config_path();
 
+        // 创建请求处理器（在 spawn 之前创建，以便保存 router_ref）
+        let processor = match (&shared_stats, &shared_tokens) {
+            (Some(stats), Some(tokens)) => Arc::new(RequestProcessor::with_shared_telemetry(
+                pool_service.clone(),
+                stats.clone(),
+                tokens.clone(),
+            )),
+            _ => Arc::new(RequestProcessor::with_defaults(pool_service.clone())),
+        };
+
+        // 从配置初始化 Router 的默认 Provider
+        {
+            let default_provider_str = &config.routing.default_provider;
+            if let Ok(provider_type) = default_provider_str.parse::<crate::ProviderType>() {
+                let mut router = processor.router.write().await;
+                router.set_default_provider(provider_type);
+                tracing::info!(
+                    "[SERVER] 从配置初始化 Router 默认 Provider: {}",
+                    default_provider_str
+                );
+            }
+        }
+
+        // 保存 router_ref 以便后续动态更新
+        self.router_ref = Some(processor.router.clone());
+
         tokio::spawn(async move {
             if let Err(e) = run_server(
                 &host,
@@ -320,6 +349,7 @@ impl ServerState {
                 shared_flow_interceptor,
                 Some(config),
                 Some(config_path),
+                Some(processor),
             )
             .await
             {
@@ -341,6 +371,7 @@ impl ServerState {
         self.running = false;
         self.start_time = None;
         self.running_api_key = None;
+        self.router_ref = None;
     }
 }
 
@@ -417,7 +448,7 @@ async fn start_config_watcher(
     db: Option<DbConnection>,
     config_manager: Option<Arc<std::sync::RwLock<ConfigManager>>>,
 ) -> Option<FileWatcher> {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ConfigChangeEvent>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<FileChangeEvent>();
 
     // 创建文件监控器
     let mut watcher = match FileWatcher::new(&config_path, tx) {
@@ -558,45 +589,18 @@ async fn update_processor_config(processor: &RequestProcessor, config: &Config) 
         );
     }
 
-    // 更新路由器规则
+    // 更新路由器默认 Provider
     {
         let mut router = processor.router.write().await;
-        router.clear_rules();
-
-        // 如果配置文件中有路由规则，使用配置文件的规则
-        // 否则使用默认规则
-        if !config.routing.rules.is_empty() {
-            for rule in &config.routing.rules {
-                // 解析 provider 字符串为 ProviderType
-                if let Ok(provider_type) = rule.provider.parse::<crate::ProviderType>() {
-                    router.add_rule(crate::router::RoutingRule {
-                        pattern: rule.pattern.clone(),
-                        target_provider: provider_type,
-                        priority: rule.priority,
-                        enabled: true,
-                    });
-                } else {
-                    tracing::warn!("[HOT_RELOAD] 无法解析 provider: {}", rule.provider);
-                }
-            }
+        if let Ok(provider_type) = config
+            .routing
+            .default_provider
+            .parse::<crate::ProviderType>()
+        {
+            router.set_default_provider(provider_type);
             tracing::debug!(
-                "[HOT_RELOAD] 路由规则已更新: {} 条规则（来自配置文件）",
-                config.routing.rules.len()
-            );
-        } else {
-            // 使用默认路由规则
-            router.add_rule(crate::router::RoutingRule::new(
-                "gemini-*",
-                crate::ProviderType::Antigravity,
-                10,
-            ));
-            router.add_rule(crate::router::RoutingRule::new(
-                "claude-*",
-                crate::ProviderType::Kiro,
-                10,
-            ));
-            tracing::debug!(
-                "[HOT_RELOAD] 路由规则已更新: 使用默认规则 (gemini-* → Antigravity, claude-* → Kiro)"
+                "[HOT_RELOAD] 路由器默认 Provider 已更新: {}",
+                config.routing.default_provider
             );
         }
     }
@@ -697,17 +701,21 @@ async fn run_server(
     shared_flow_interceptor: Option<Arc<FlowInterceptor>>,
     config: Option<Config>,
     config_path: Option<PathBuf>,
+    processor: Option<Arc<RequestProcessor>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let base_url = format!("http://{}:{}", host, port);
 
-    // 创建请求处理器（使用共享的遥测实例或默认实例）
-    let processor = match (shared_stats, shared_tokens) {
-        (Some(stats), Some(tokens)) => Arc::new(RequestProcessor::with_shared_telemetry(
-            pool_service.clone(),
-            stats,
-            tokens,
-        )),
-        _ => Arc::new(RequestProcessor::with_defaults(pool_service.clone())),
+    // 使用传入的 processor 或创建新的
+    let processor = match processor {
+        Some(p) => p,
+        None => match (&shared_stats, &shared_tokens) {
+            (Some(stats), Some(tokens)) => Arc::new(RequestProcessor::with_shared_telemetry(
+                pool_service.clone(),
+                stats.clone(),
+                tokens.clone(),
+            )),
+            _ => Arc::new(RequestProcessor::with_defaults(pool_service.clone())),
+        },
     };
 
     // 将注入器规则同步到处理器
@@ -715,6 +723,19 @@ async fn run_server(
         let mut proc_injector = processor.injector.write().await;
         for rule in injector.rules() {
             proc_injector.add_rule(rule.clone());
+        }
+    }
+
+    // 从配置初始化 Router 的默认 Provider
+    if let Some(cfg) = &config {
+        let default_provider_str = &cfg.routing.default_provider;
+        if let Ok(provider_type) = default_provider_str.parse::<crate::ProviderType>() {
+            let mut router = processor.router.write().await;
+            router.set_default_provider(provider_type);
+            tracing::info!(
+                "[SERVER] 从配置初始化 Router 默认 Provider: {}",
+                default_provider_str
+            );
         }
     }
 

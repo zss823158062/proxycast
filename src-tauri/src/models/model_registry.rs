@@ -385,6 +385,58 @@ impl Default for ModelSyncState {
     }
 }
 
+// ============================================================================
+// Provider Alias 相关类型（用于 Kiro、Antigravity 等中转服务）
+// ============================================================================
+
+/// 单个模型别名映射
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelAlias {
+    /// 实际模型 ID（如 "claude-sonnet-4-5-20250929"）
+    pub actual: String,
+    /// 内部 API 名称（如 "CLAUDE_SONNET_4_5_20250929_V1_0"）
+    pub internal_name: Option<String>,
+    /// 原始 Provider（如 "anthropic"）
+    pub provider: Option<String>,
+    /// 描述
+    pub description: Option<String>,
+}
+
+/// Provider 的别名配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAliasConfig {
+    /// Provider ID（如 "kiro"、"antigravity"）
+    pub provider: String,
+    /// 描述
+    pub description: Option<String>,
+    /// 支持的模型列表
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// 别名映射（模型名 -> 别名配置）
+    pub aliases: std::collections::HashMap<String, ModelAlias>,
+    /// 更新时间
+    pub updated_at: Option<String>,
+}
+
+impl ProviderAliasConfig {
+    /// 检查是否支持指定模型
+    pub fn supports_model(&self, model: &str) -> bool {
+        self.models.contains(&model.to_string()) || self.aliases.contains_key(model)
+    }
+
+    /// 获取模型的内部名称
+    pub fn get_internal_name(&self, model: &str) -> Option<&str> {
+        self.aliases
+            .get(model)
+            .and_then(|a| a.internal_name.as_deref())
+    }
+
+    /// 获取模型的实际 ID
+    pub fn get_actual_model(&self, model: &str) -> Option<&str> {
+        self.aliases.get(model).map(|a| a.actual.as_str())
+    }
+}
+
 /// models.dev API 响应中的 Provider 结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelsDevProvider {

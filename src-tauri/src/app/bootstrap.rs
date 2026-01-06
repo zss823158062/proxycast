@@ -20,9 +20,8 @@ use crate::commands::plugin_cmd::PluginManagerState;
 use crate::commands::plugin_install_cmd::PluginInstallerState;
 use crate::commands::provider_pool_cmd::{CredentialSyncServiceState, ProviderPoolServiceState};
 use crate::commands::resilience_cmd::ResilienceConfigState;
-use crate::commands::router_cmd::RouterConfigState;
 use crate::commands::skill_cmd::SkillServiceState;
-use crate::config::{self, Config};
+use crate::config::{self, Config, ConfigManager, GlobalConfigManager, GlobalConfigManagerState};
 use crate::database::{self, DbConnection};
 use crate::flow_monitor::{
     BatchOperations, BookmarkManager, EnhancedStatsService, FlowFileStore, FlowInterceptor,
@@ -115,7 +114,6 @@ pub struct AppStates {
     pub credential_sync_service: CredentialSyncServiceState,
     pub token_cache_service: TokenCacheServiceState,
     pub machine_id_service: MachineIdState,
-    pub router_config: RouterConfigState,
     pub resilience_config: ResilienceConfigState,
     pub plugin_manager: PluginManagerState,
     pub plugin_installer: PluginInstallerState,
@@ -134,6 +132,7 @@ pub struct AppStates {
     pub orchestrator: OrchestratorState,
     pub connect_state: ConnectStateWrapper,
     pub model_registry: ModelRegistryState,
+    pub global_config_manager: GlobalConfigManagerState,
     // 用于 setup hook 的共享实例
     pub shared_stats: Arc<parking_lot::RwLock<telemetry::StatsAggregator>>,
     pub shared_tokens: Arc<parking_lot::RwLock<telemetry::TokenTracker>>,
@@ -172,7 +171,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         .map_err(|e| format!("MachineIdService 初始化失败: {}", e))?;
     let machine_id_service_state: MachineIdState = Arc::new(RwLock::new(machine_id_service));
 
-    let router_config_state = RouterConfigState::default();
     let resilience_config_state = ResilienceConfigState::default();
 
     // 插件管理器
@@ -212,6 +210,11 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     // 初始化 Model Registry 状态（延迟初始化，在 setup hook 中完成）
     let model_registry_state: ModelRegistryState = Arc::new(RwLock::new(None));
 
+    // 初始化全局配置管理器
+    let config_path = ConfigManager::default_config_path();
+    let global_config_manager = GlobalConfigManager::new(config.clone(), config_path);
+    let global_config_manager_state = GlobalConfigManagerState::new(global_config_manager);
+
     // 初始化默认技能仓库
     {
         let conn = db.lock().expect("Failed to lock database");
@@ -229,7 +232,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         credential_sync_service: credential_sync_service_state,
         token_cache_service: token_cache_service_state,
         machine_id_service: machine_id_service_state,
-        router_config: router_config_state,
         resilience_config: resilience_config_state,
         plugin_manager: plugin_manager_state,
         plugin_installer: plugin_installer_state,
@@ -248,6 +250,7 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         orchestrator: orchestrator_state,
         connect_state,
         model_registry: model_registry_state,
+        global_config_manager: global_config_manager_state,
         shared_stats,
         shared_tokens,
         shared_logger,

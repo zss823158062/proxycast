@@ -2675,7 +2675,7 @@ pub async fn handle_kiro_stream(
             match chunk_result {
                 Ok(bytes) => {
                     // 调试日志：记录接收到的字节数
-                    tracing::debug!(
+                    tracing::info!(
                         "[KIRO_STREAM] 收到 {} 字节数据",
                         bytes.len()
                     );
@@ -2687,7 +2687,7 @@ pub async fn handle_kiro_stream(
                     };
 
                     // 调试日志：记录生成的 SSE 事件数量
-                    tracing::debug!(
+                    tracing::info!(
                         "[KIRO_STREAM] 生成 {} 个 SSE 事件",
                         sse_strings.len()
                     );
@@ -2771,7 +2771,7 @@ pub async fn handle_kiro_stream(
             pipeline_guard.finish()
         };
 
-        tracing::debug!("[KIRO_STREAM] finalize 生成 {} 个事件", final_events.len());
+        tracing::info!("[KIRO_STREAM] finalize 生成 {} 个事件", final_events.len());
 
         for sse_str in final_events {
             // 调用 FlowMonitor.process_chunk()

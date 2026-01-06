@@ -5,10 +5,11 @@
 use crate::database::DbConnection;
 use crate::models::model_registry::{
     EnhancedModelMetadata, ModelCapabilities, ModelLimits, ModelPricing, ModelSource, ModelStatus,
-    ModelSyncState, ModelTier, UserModelPreference,
+    ModelSyncState, ModelTier, ProviderAliasConfig, UserModelPreference,
 };
 use rusqlite::params;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -91,6 +92,8 @@ pub struct ModelRegistryService {
     db: DbConnection,
     /// 内存缓存的模型数据
     models_cache: Arc<RwLock<Vec<EnhancedModelMetadata>>>,
+    /// Provider 别名配置缓存（provider_id -> ProviderAliasConfig）
+    aliases_cache: Arc<RwLock<HashMap<String, ProviderAliasConfig>>>,
     /// 同步状态
     sync_state: Arc<RwLock<ModelSyncState>>,
 }
@@ -101,6 +104,7 @@ impl ModelRegistryService {
         Self {
             db,
             models_cache: Arc::new(RwLock::new(Vec::new())),
+            aliases_cache: Arc::new(RwLock::new(HashMap::new())),
             sync_state: Arc::new(RwLock::new(ModelSyncState::default())),
         }
     }
@@ -153,12 +157,14 @@ impl ModelRegistryService {
     fn spawn_background_refresh(&self) {
         let db = self.db.clone();
         let models_cache = self.models_cache.clone();
+        let aliases_cache = self.aliases_cache.clone();
         let sync_state = self.sync_state.clone();
 
         tokio::spawn(async move {
             let service = ModelRegistryService {
                 db,
                 models_cache,
+                aliases_cache,
                 sync_state,
             };
             if let Err(e) = service.refresh_from_repo().await {
@@ -178,17 +184,30 @@ impl ModelRegistryService {
             state.last_error = None;
         }
 
-        // 获取数据
-        let result = self.fetch_models_from_repo().await;
+        // 获取模型数据
+        let models_result = self.fetch_models_from_repo().await;
 
-        match result {
+        // 获取别名数据
+        let aliases_result = self.fetch_aliases_from_repo().await;
+
+        match models_result {
             Ok(models) => {
                 tracing::info!("[ModelRegistry] 获取了 {} 个模型", models.len());
 
-                // 更新缓存
+                // 更新模型缓存
                 {
                     let mut cache = self.models_cache.write().await;
                     *cache = models.clone();
+                }
+
+                // 更新别名缓存
+                if let Ok(aliases) = aliases_result {
+                    tracing::info!(
+                        "[ModelRegistry] 获取了 {} 个 Provider 别名配置",
+                        aliases.len()
+                    );
+                    let mut cache = self.aliases_cache.write().await;
+                    *cache = aliases;
                 }
 
                 // 保存到数据库
@@ -221,6 +240,59 @@ impl ModelRegistryService {
                 Err(e)
             }
         }
+    }
+
+    /// 从 models 仓库获取别名配置
+    async fn fetch_aliases_from_repo(
+        &self,
+    ) -> Result<HashMap<String, ProviderAliasConfig>, String> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+        let mut aliases = HashMap::new();
+
+        // 已知的别名文件列表
+        let alias_files = ["kiro", "antigravity"];
+
+        for alias_name in alias_files {
+            let alias_url = format!("{}/aliases/{}.json", MODELS_REPO_BASE_URL, alias_name);
+
+            match client
+                .get(&alias_url)
+                .header("User-Agent", "ProxyCast/1.0")
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        match response.json::<ProviderAliasConfig>().await {
+                            Ok(config) => {
+                                tracing::info!(
+                                    "[ModelRegistry] 加载别名配置: {} ({} 个模型)",
+                                    config.provider,
+                                    config.models.len()
+                                );
+                                aliases.insert(config.provider.clone(), config);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[ModelRegistry] 解析别名配置 {} 失败: {}",
+                                    alias_name,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[ModelRegistry] 获取别名配置 {} 失败: {}", alias_name, e);
+                }
+            }
+        }
+
+        Ok(aliases)
     }
 
     /// 从 models 仓库获取数据
@@ -753,5 +825,36 @@ impl ModelRegistryService {
         .map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+
+    // ========== Provider 别名相关方法 ==========
+
+    /// 获取指定 Provider 的别名配置
+    pub async fn get_provider_alias_config(&self, provider: &str) -> Option<ProviderAliasConfig> {
+        self.aliases_cache.read().await.get(provider).cloned()
+    }
+
+    /// 检查指定 Provider 是否支持某个模型
+    pub async fn provider_supports_model(&self, provider: &str, model: &str) -> bool {
+        if let Some(config) = self.aliases_cache.read().await.get(provider) {
+            config.supports_model(model)
+        } else {
+            // 如果没有别名配置，默认支持所有模型
+            true
+        }
+    }
+
+    /// 获取模型在指定 Provider 中的内部名称
+    pub async fn get_model_internal_name(&self, provider: &str, model: &str) -> Option<String> {
+        self.aliases_cache
+            .read()
+            .await
+            .get(provider)
+            .and_then(|config| config.get_internal_name(model).map(|s| s.to_string()))
+    }
+
+    /// 获取所有 Provider 别名配置
+    pub async fn get_all_alias_configs(&self) -> HashMap<String, ProviderAliasConfig> {
+        self.aliases_cache.read().await.clone()
     }
 }

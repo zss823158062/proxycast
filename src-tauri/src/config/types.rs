@@ -663,15 +663,9 @@ pub struct RoutingConfig {
     /// 默认 Provider
     #[serde(default = "default_provider")]
     pub default_provider: String,
-    /// 路由规则
-    #[serde(default)]
-    pub rules: Vec<RoutingRuleConfig>,
     /// 模型别名映射
     #[serde(default)]
     pub model_aliases: HashMap<String, String>,
-    /// 排除列表（按 Provider）
-    #[serde(default)]
-    pub exclusions: HashMap<String, Vec<String>>,
 }
 
 fn default_provider() -> String {
@@ -682,49 +676,9 @@ impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
             default_provider: default_provider(),
-            rules: default_routing_rules(),
             model_aliases: HashMap::new(),
-            exclusions: HashMap::new(),
         }
     }
-}
-
-/// 默认路由规则
-///
-/// 为常见的模型模式提供默认路由：
-/// - `gemini-*` → Antigravity (Antigravity 支持 Gemini 系列模型)
-/// - `claude-*` → Kiro (默认使用 Kiro 处理 Claude 模型)
-fn default_routing_rules() -> Vec<RoutingRuleConfig> {
-    vec![
-        // Gemini 模型路由到 Antigravity
-        RoutingRuleConfig {
-            pattern: "gemini-*".to_string(),
-            provider: "antigravity".to_string(),
-            priority: 10,
-        },
-        // Claude 模型路由到 Kiro
-        RoutingRuleConfig {
-            pattern: "claude-*".to_string(),
-            provider: "kiro".to_string(),
-            priority: 10,
-        },
-    ]
-}
-
-/// 路由规则配置
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RoutingRuleConfig {
-    /// 模型模式（支持通配符）
-    pub pattern: String,
-    /// 目标 Provider
-    pub provider: String,
-    /// 优先级（数字越小优先级越高）
-    #[serde(default = "default_priority")]
-    pub priority: i32,
-}
-
-fn default_priority() -> i32 {
-    100
 }
 
 /// 重试配置
@@ -1170,6 +1124,10 @@ fn default_rule_enabled() -> bool {
     true
 }
 
+fn default_priority() -> i32 {
+    100
+}
+
 impl From<InjectionRuleConfig> for InjectionRule {
     fn from(config: InjectionRuleConfig) -> Self {
         let mut rule = InjectionRule::new(&config.id, &config.pattern, config.parameters);
@@ -1369,14 +1327,7 @@ mod unit_tests {
     fn test_routing_config_default() {
         let config = RoutingConfig::default();
         assert_eq!(config.default_provider, "kiro");
-        // 默认包含 gemini-* 和 claude-* 的路由规则
-        assert_eq!(config.rules.len(), 2);
-        assert_eq!(config.rules[0].pattern, "gemini-*");
-        assert_eq!(config.rules[0].provider, "antigravity");
-        assert_eq!(config.rules[1].pattern, "claude-*");
-        assert_eq!(config.rules[1].provider, "kiro");
         assert!(config.model_aliases.is_empty());
-        assert!(config.exclusions.is_empty());
     }
 
     #[test]

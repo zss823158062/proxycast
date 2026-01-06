@@ -109,19 +109,16 @@ impl RequestProcessor {
     }
 
     /// 创建带默认路由规则的路由器
+    ///
+    /// 注意：不再添加硬编码的路由规则，让用户设置的默认 Provider 生效
+    /// 用户可以通过 UI 或配置文件自定义路由规则
     fn create_router_with_defaults() -> Router {
-        use crate::router::RoutingRule;
         use crate::ProviderType;
 
-        let mut router = Router::new(ProviderType::Kiro);
+        // 创建空的路由器，默认 Provider 会在启动时从配置中设置
+        let router = Router::new(ProviderType::Kiro);
 
-        // 添加默认路由规则：gemini-* → Antigravity
-        router.add_rule(RoutingRule::new("gemini-*", ProviderType::Antigravity, 10));
-
-        // 添加默认路由规则：claude-* → Kiro
-        router.add_rule(RoutingRule::new("claude-*", ProviderType::Kiro, 10));
-
-        tracing::info!("[ROUTER] 初始化默认路由规则: gemini-* → Antigravity, claude-* → Kiro");
+        tracing::info!("[ROUTER] 初始化路由器（无硬编码规则，使用用户配置的默认 Provider）");
 
         router
     }
@@ -237,19 +234,6 @@ impl RequestProcessor {
 
         // 2. 根据解析后的模型选择 Provider
         self.route_for_context(ctx).await
-    }
-
-    /// 检查模型是否被指定 Provider 排除
-    ///
-    /// # Arguments
-    /// * `provider` - Provider 类型
-    /// * `model` - 模型名称
-    ///
-    /// # Returns
-    /// 如果模型被排除返回 true
-    pub async fn is_model_excluded(&self, provider: crate::ProviderType, model: &str) -> bool {
-        let router = self.router.read().await;
-        router.is_excluded(provider, model)
     }
 }
 

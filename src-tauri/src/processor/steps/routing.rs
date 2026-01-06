@@ -93,7 +93,6 @@ impl PipelineStep for RoutingStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::router::RoutingRule;
 
     #[tokio::test]
     async fn test_routing_step_resolve_model() {
@@ -117,8 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_routing_step_select_provider() {
-        let mut router = Router::new(ProviderType::Kiro);
-        router.add_rule(RoutingRule::new("gemini-*", ProviderType::Gemini, 10));
+        let router = Router::new(ProviderType::Kiro);
 
         let step = RoutingStep::new(
             Arc::new(RwLock::new(router)),
@@ -126,12 +124,11 @@ mod tests {
             Arc::new(RwLock::new("kiro".to_string())),
         );
 
-        // 匹配路由规则
+        // 所有模型都使用默认 Provider
         let provider = step.select_provider("gemini-2.5-flash").await;
         assert!(provider.is_ok());
-        assert_eq!(provider.unwrap(), ProviderType::Gemini);
+        assert_eq!(provider.unwrap(), ProviderType::Kiro);
 
-        // 使用默认 Provider
         let provider = step.select_provider("claude-sonnet-4-5").await;
         assert!(provider.is_ok());
         assert_eq!(provider.unwrap(), ProviderType::Kiro);

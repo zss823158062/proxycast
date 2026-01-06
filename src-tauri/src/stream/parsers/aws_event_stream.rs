@@ -66,6 +66,8 @@ pub struct AwsEventStreamParser {
     context: StreamContext,
     /// 是否已发送消息开始事件
     message_started: bool,
+    /// 是否已发送消息结束事件
+    message_stopped: bool,
     /// 是否在文本块中
     in_text_block: bool,
     /// 当前文本块索引
@@ -92,6 +94,7 @@ impl AwsEventStreamParser {
             max_buffer_size: Self::DEFAULT_MAX_BUFFER_SIZE,
             context: StreamContext::new(),
             message_started: false,
+            message_stopped: false,
             in_text_block: false,
             text_block_index: None,
         }
@@ -127,6 +130,7 @@ impl AwsEventStreamParser {
         self.parse_error_count = 0;
         self.context = StreamContext::new();
         self.message_started = false;
+        self.message_stopped = false;
         self.in_text_block = false;
         self.text_block_index = None;
     }
@@ -142,7 +146,7 @@ impl AwsEventStreamParser {
         }
 
         // 调试日志：记录接收到的字节
-        tracing::debug!(
+        tracing::info!(
             "[AWS_PARSER] 收到 {} 字节, 缓冲区当前 {} 字节",
             bytes.len(),
             self.buffer.len()
@@ -174,7 +178,7 @@ impl AwsEventStreamParser {
         // 解析缓冲区中的所有完整 JSON 对象
         let events = self.parse_buffer();
 
-        tracing::debug!(
+        tracing::info!(
             "[AWS_PARSER] 解析出 {} 个事件, 缓冲区剩余 {} 字节",
             events.len(),
             self.buffer.len()
@@ -193,6 +197,7 @@ impl AwsEventStreamParser {
         events.extend(self.parse_buffer());
 
         // 完成所有未完成的工具调用
+        let has_tool_calls = !self.tool_accumulators.is_empty();
         for (id, accumulator) in self.tool_accumulators.drain() {
             if !accumulator.name.is_empty() {
                 events.push(StreamEvent::ToolUseStop { id: id.clone() });
@@ -207,6 +212,19 @@ impl AwsEventStreamParser {
             events.push(StreamEvent::ContentBlockStop { index });
         }
 
+        // 如果消息已经开始但还没有发送 MessageStop，生成一个
+        // 这确保了即使 Kiro 后端没有发送 stop 事件，客户端也能收到完整的响应
+        if self.message_started && !self.message_stopped {
+            tracing::info!("[AWS_PARSER] finish() 生成 MessageStop 事件");
+            let stop_reason = if has_tool_calls {
+                StopReason::ToolUse
+            } else {
+                StopReason::EndTurn
+            };
+            events.push(StreamEvent::MessageStop { stop_reason });
+            self.message_stopped = true;
+        }
+
         // 更新状态
         self.state = ParserState::Completed;
 
@@ -217,7 +235,6 @@ impl AwsEventStreamParser {
     fn parse_buffer(&mut self) -> Vec<StreamEvent> {
         let mut events = Vec::new();
         let mut pos = 0;
-        let mut json_count = 0;
 
         while pos < self.buffer.len() {
             // 查找下一个 JSON 对象的开始位置
@@ -229,30 +246,11 @@ impl AwsEventStreamParser {
             // 提取 JSON 对象
             match self.extract_json(start) {
                 Some((json_str, end_pos)) => {
-                    json_count += 1;
-                    // 调试日志：记录解析到的 JSON
-                    tracing::debug!(
-                        "[AWS_PARSER] 解析 JSON #{}: {}",
-                        json_count,
-                        if json_str.len() > 100 {
-                            format!("{}...", &json_str[..100])
-                        } else {
-                            json_str.clone()
-                        }
-                    );
-
                     // 解析 JSON 并生成事件
                     match self.parse_json_event(&json_str) {
-                        Ok(event_list) => {
-                            tracing::debug!(
-                                "[AWS_PARSER] JSON #{} 生成 {} 个事件",
-                                json_count,
-                                event_list.len()
-                            );
-                            events.extend(event_list);
-                        }
+                        Ok(event_list) => events.extend(event_list),
                         Err(e) => {
-                            tracing::warn!("[AWS_PARSER] JSON #{} 解析错误: {}", json_count, e);
+                            tracing::warn!("[AWS_PARSER] JSON 解析错误: {}", e);
                             self.parse_error_count += 1;
                             events.push(StreamEvent::Error {
                                 error_type: "parse_error".to_string(),
@@ -264,11 +262,6 @@ impl AwsEventStreamParser {
                 }
                 None => {
                     // JSON 对象不完整，等待更多数据
-                    tracing::debug!(
-                        "[AWS_PARSER] JSON 不完整，等待更多数据 (pos={}, buffer_len={})",
-                        pos,
-                        self.buffer.len()
-                    );
                     break;
                 }
             }
@@ -331,6 +324,16 @@ impl AwsEventStreamParser {
 
     /// 解析 JSON 事件并生成 StreamEvent
     fn parse_json_event(&mut self, json_str: &str) -> Result<Vec<StreamEvent>, String> {
+        // 调试日志：记录解析到的 JSON
+        tracing::info!(
+            "[AWS_PARSER] 解析 JSON: {}",
+            if json_str.len() > 200 {
+                format!("{}...", &json_str[..200])
+            } else {
+                json_str.to_string()
+            }
+        );
+
         let value: serde_json::Value =
             serde_json::from_str(json_str).map_err(|e| format!("JSON 解析错误: {}", e))?;
 
@@ -452,6 +455,7 @@ impl AwsEventStreamParser {
             };
 
             events.push(StreamEvent::MessageStop { stop_reason });
+            self.message_stopped = true;
         }
         // 处理 usage 事件
         else if let Some(usage) = value.get("usage").and_then(|v| v.as_f64()) {

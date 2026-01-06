@@ -7,22 +7,14 @@ import { TlsSettings } from "./TlsSettings";
 import { QuotaSettings } from "./QuotaSettings";
 import { RemoteManagementSettings } from "./RemoteManagementSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
-import { RoutingSettings } from "./RoutingSettings";
 
-type SettingsTab =
-  | "general"
-  | "security"
-  | "advanced"
-  | "extensions"
-  | "routing"
-  | "about";
+type SettingsTab = "general" | "security" | "advanced" | "extensions" | "about";
 
 const tabs: { id: SettingsTab; label: string; experimental?: boolean }[] = [
   { id: "general", label: "通用" },
   { id: "security", label: "安全" },
   { id: "advanced", label: "高级" },
   { id: "extensions", label: "扩展", experimental: true },
-  { id: "routing", label: "路由管理", experimental: true },
   { id: "about", label: "关于" },
 ];
 
@@ -76,7 +68,6 @@ export function SettingsPage() {
           </div>
         )}
         {activeTab === "extensions" && <ExtensionsSettings />}
-        {activeTab === "routing" && <RoutingSettings />}
         {activeTab === "about" && <AboutSection />}
       </div>
     </div>

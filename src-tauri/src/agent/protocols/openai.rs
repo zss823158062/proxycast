@@ -403,14 +403,10 @@ impl Protocol for OpenAIProtocol {
             req_builder = req_builder.header("X-Provider-Id", pid);
         }
 
-        let response = req_builder
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                eprintln!("[OpenAIProtocol] 请求发送失败: {}", e);
-                format!("请求失败: {}", e)
-            })?;
+        let response = req_builder.json(&request).send().await.map_err(|e| {
+            eprintln!("[OpenAIProtocol] 请求发送失败: {}", e);
+            format!("请求失败: {}", e)
+        })?;
 
         let status = response.status();
         eprintln!("[OpenAIProtocol] 响应状态: {}", status);

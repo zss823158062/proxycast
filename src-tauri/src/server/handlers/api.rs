@@ -1758,15 +1758,18 @@ pub async fn anthropic_messages(
     );
 
     // 尝试从凭证池中选择凭证（带智能降级）
+    // 优先使用路由结果 provider，而不是 selected_provider
+    // 这确保了路由规则（如 claude-* → Kiro）能够正确生效
+    let credential_provider = provider.to_string().to_lowercase();
     let credential = match &state.db {
         Some(db) => {
-            // 根据选择的 Provider 配置选择凭证
+            // 根据路由结果选择凭证
             state
                 .pool_service
                 .select_credential_with_fallback(
                     db,
                     &state.api_key_service,
-                    &selected_provider,
+                    &credential_provider,
                     Some(&request.model),
                     None, // provider_id_hint 可从路由或请求头提取
                 )
@@ -1778,9 +1781,9 @@ pub async fn anthropic_messages(
 
     // 如果 Provider Pool 中没有找到凭证，尝试从 API Key Provider 获取
     let credential = if credential.is_none() {
-        // 根据 selected_provider 映射到 ApiProviderType
+        // 根据路由结果映射到 ApiProviderType
         use crate::database::dao::api_key_provider::ApiProviderType;
-        let api_provider_type = match selected_provider.to_lowercase().as_str() {
+        let api_provider_type = match credential_provider.as_str() {
             "anthropic" | "claude" => Some(ApiProviderType::Anthropic),
             "openai" => Some(ApiProviderType::Openai),
             "gemini" => Some(ApiProviderType::Gemini),
