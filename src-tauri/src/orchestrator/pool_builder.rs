@@ -16,6 +16,7 @@ pub enum ProviderType {
     Kiro,
     Azure,
     Bedrock,
+    Antigravity,
     Custom,
 }
 
@@ -29,6 +30,7 @@ impl ProviderType {
             "kiro" | "codewhisperer" => Some(ProviderType::Kiro),
             "azure" => Some(ProviderType::Azure),
             "bedrock" => Some(ProviderType::Bedrock),
+            "antigravity" => Some(ProviderType::Antigravity),
             _ => Some(ProviderType::Custom),
         }
     }
@@ -42,6 +44,7 @@ impl ProviderType {
             ProviderType::Kiro => "Kiro",
             ProviderType::Azure => "Azure",
             ProviderType::Bedrock => "Bedrock",
+            ProviderType::Antigravity => "Antigravity",
             ProviderType::Custom => "Custom",
         }
     }
@@ -83,13 +86,30 @@ impl ProviderDefinition {
                 // 简单的 glob 匹配
                 let parts: Vec<&str> = pattern_lower.split('*').collect();
                 if parts.len() == 2 {
+                    // 模式如 "claude-*" 或 "*sonnet"
                     let prefix = parts[0];
                     let suffix = parts[1];
-                    model_lower.starts_with(prefix) && model_lower.ends_with(suffix)
+                    if prefix.is_empty() {
+                        model_lower.ends_with(suffix)
+                    } else if suffix.is_empty() {
+                        model_lower.starts_with(prefix)
+                    } else {
+                        model_lower.starts_with(prefix) && model_lower.ends_with(suffix)
+                    }
+                } else if parts.len() == 3 {
+                    // 模式如 "claude-*opus*" (prefix*middle*suffix)
+                    let prefix = parts[0];
+                    let middle = parts[1];
+                    let suffix = parts[2];
+                    let starts_ok = prefix.is_empty() || model_lower.starts_with(prefix);
+                    let ends_ok = suffix.is_empty() || model_lower.ends_with(suffix);
+                    let contains_middle = middle.is_empty() || model_lower.contains(middle);
+                    starts_ok && ends_ok && contains_middle
                 } else if parts.len() == 1 {
                     model_lower.starts_with(parts[0])
                 } else {
-                    false
+                    // 复杂模式，回退到简单包含检查
+                    parts.iter().all(|p| p.is_empty() || model_lower.contains(p))
                 }
             } else {
                 model_lower.contains(&pattern_lower)
@@ -217,6 +237,47 @@ pub fn builtin_provider_definitions() -> Vec<ProviderDefinition> {
                     pattern: "claude-*haiku*".to_string(),
                     tier: 1,
                     description: Some("Claude Haiku via Kiro".to_string()),
+                },
+            ],
+            default_base_url: None,
+        },
+        // Antigravity (Google Cloud Code Assist)
+        ProviderDefinition {
+            provider_type: ProviderType::Antigravity,
+            display_name: "Antigravity".to_string(),
+            families: vec![
+                // Max 等级：Gemini 3 Pro 和 Claude Opus
+                ModelFamily {
+                    name: "gemini-3-pro".to_string(),
+                    pattern: "gemini-3-pro*".to_string(),
+                    tier: 3,
+                    description: Some("Gemini 3 Pro via Antigravity".to_string()),
+                },
+                ModelFamily {
+                    name: "opus".to_string(),
+                    pattern: "*opus*".to_string(),
+                    tier: 3,
+                    description: Some("Claude Opus via Antigravity".to_string()),
+                },
+                // Pro 等级：Claude Sonnet 和 Gemini 2.5
+                ModelFamily {
+                    name: "sonnet".to_string(),
+                    pattern: "*sonnet*".to_string(),
+                    tier: 2,
+                    description: Some("Claude Sonnet via Antigravity".to_string()),
+                },
+                ModelFamily {
+                    name: "gemini-2.5".to_string(),
+                    pattern: "gemini-2.5*".to_string(),
+                    tier: 2,
+                    description: Some("Gemini 2.5 via Antigravity".to_string()),
+                },
+                // Mini 等级：Flash 模型
+                ModelFamily {
+                    name: "gemini-3-flash".to_string(),
+                    pattern: "gemini-3-flash*".to_string(),
+                    tier: 1,
+                    description: Some("Gemini 3 Flash via Antigravity".to_string()),
                 },
             ],
             default_base_url: None,
@@ -395,8 +456,10 @@ pub fn builtin_model_metadata() -> Vec<ModelMetadata> {
 pub struct CredentialInfo {
     /// 凭证 ID
     pub id: String,
-    /// Provider 类型
+    /// Provider 类型（用于模型分类）
     pub provider_type: ProviderType,
+    /// 原始 Provider 类型字符串（用于前端识别，如 "antigravity"、"kiro" 等）
+    pub original_provider_type: Option<String>,
     /// 支持的模型列表
     pub supported_models: Vec<String>,
     /// 是否健康
@@ -476,13 +539,19 @@ impl DynamicPoolBuilder {
                     .or_else(|| metadata.as_ref().and_then(|m| m.family.clone()));
 
                 // 构建 AvailableModel
+                // 优先使用原始 provider 类型（如 "antigravity"），否则使用枚举名称
+                let provider_type_str = credential
+                    .original_provider_type
+                    .clone()
+                    .unwrap_or_else(|| format!("{:?}", credential.provider_type).to_lowercase());
+
                 let available_model = AvailableModel {
                     id: model_id.clone(),
                     display_name: metadata
                         .as_ref()
                         .map(|m| m.display_name.clone())
                         .unwrap_or_else(|| model_id.clone()),
-                    provider_type: format!("{:?}", credential.provider_type).to_lowercase(),
+                    provider_type: provider_type_str,
                     family,
                     credential_id: credential.id.clone(),
                     context_length: metadata.as_ref().and_then(|m| m.context_length),
@@ -590,6 +659,7 @@ mod tests {
             CredentialInfo {
                 id: "cred-1".to_string(),
                 provider_type: ProviderType::Anthropic,
+                original_provider_type: None,
                 supported_models: vec![
                     "claude-opus-4-5-20251101".to_string(),
                     "claude-sonnet-4-5-20250514".to_string(),
@@ -601,6 +671,7 @@ mod tests {
             CredentialInfo {
                 id: "cred-2".to_string(),
                 provider_type: ProviderType::OpenAI,
+                original_provider_type: None,
                 supported_models: vec!["gpt-4o".to_string(), "gpt-3.5-turbo".to_string()],
                 is_healthy: true,
                 current_load: Some(20),
@@ -622,6 +693,7 @@ mod tests {
         let credentials = vec![CredentialInfo {
             id: "cred-1".to_string(),
             provider_type: ProviderType::Anthropic,
+            original_provider_type: None,
             supported_models: vec![
                 "claude-sonnet-4-5-20250514".to_string(),
                 "claude-3-5-sonnet-20241022".to_string(),

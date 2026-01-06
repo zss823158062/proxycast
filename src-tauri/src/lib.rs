@@ -31,6 +31,7 @@ pub mod websocket;
 mod commands;
 mod config;
 mod converter;
+mod data;
 mod logger;
 mod models;
 mod providers;

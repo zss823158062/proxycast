@@ -1,6 +1,7 @@
 export { useFlowEvents } from "./useFlowEvents";
 export { useOAuthPlugins, useSingleOAuthPlugin } from "./useOAuthPlugins";
 export { useDeepLink } from "./useDeepLink";
+export { useModelRegistry } from "./useModelRegistry";
 export type {
   ConnectPayload,
   RelayInfo,

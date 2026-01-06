@@ -5,6 +5,7 @@ pub mod live_sync;
 pub mod machine_id_service;
 pub mod mcp_service;
 pub mod mcp_sync;
+pub mod model_registry_service;
 pub mod prompt_service;
 pub mod prompt_sync;
 pub mod provider_pool_service;

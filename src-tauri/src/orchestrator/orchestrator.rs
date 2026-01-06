@@ -324,6 +324,7 @@ mod tests {
             .update_credentials(vec![CredentialInfo {
                 id: "cred-1".to_string(),
                 provider_type: ProviderType::Anthropic,
+                original_provider_type: None,
                 supported_models: vec![
                     "claude-sonnet-4-5-20250514".to_string(),
                     "claude-3-5-haiku-20241022".to_string(),
@@ -351,6 +352,7 @@ mod tests {
             .update_credentials(vec![CredentialInfo {
                 id: "cred-1".to_string(),
                 provider_type: ProviderType::Anthropic,
+                original_provider_type: None,
                 supported_models: vec![
                     "claude-sonnet-4-5-20250514".to_string(),
                     "claude-3-5-haiku-20241022".to_string(),

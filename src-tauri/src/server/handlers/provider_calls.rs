@@ -2946,6 +2946,7 @@ fn extract_content_from_json(json: &serde_json::Value) -> Option<(String, Vec<(S
     }
 
     let mut text = String::new();
+    let mut thinking_text = String::new();
     let mut images = Vec::new();
 
     for candidate in candidates {
@@ -2955,8 +2956,35 @@ fn extract_content_from_json(json: &serde_json::Value) -> Option<(String, Vec<(S
             .and_then(|p| p.as_array())
         {
             for part in parts {
+                // 检查是否是思维内容
+                let is_thought = part
+                    .get("thought")
+                    .and_then(|t| t.as_bool())
+                    .unwrap_or(false);
+
+                // 跳过纯 thoughtSignature 部分
+                let has_thought_signature = part
+                    .get("thoughtSignature")
+                    .or_else(|| part.get("thought_signature"))
+                    .and_then(|s| s.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+
+                let has_content = part.get("text").is_some()
+                    || part.get("inlineData").is_some()
+                    || part.get("inline_data").is_some();
+
+                if has_thought_signature && !has_content {
+                    continue;
+                }
+
                 if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
-                    text.push_str(t);
+                    if is_thought {
+                        // 思维内容
+                        thinking_text.push_str(t);
+                    } else {
+                        text.push_str(t);
+                    }
                 }
                 if let Some(inline_data) =
                     part.get("inlineData").or_else(|| part.get("inline_data"))
@@ -2974,10 +3002,19 @@ fn extract_content_from_json(json: &serde_json::Value) -> Option<(String, Vec<(S
         }
     }
 
-    if text.is_empty() && images.is_empty() {
+    // 如果有 thinking 内容，用 <thinking> 标签包裹并放在前面
+    let mut final_text = String::new();
+    if !thinking_text.is_empty() {
+        final_text.push_str("<thinking>");
+        final_text.push_str(&thinking_text);
+        final_text.push_str("</thinking>\n\n");
+    }
+    final_text.push_str(&text);
+
+    if final_text.is_empty() && images.is_empty() {
         None
     } else {
-        Some((text, images))
+        Some((final_text, images))
     }
 }
 

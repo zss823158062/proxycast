@@ -14,6 +14,7 @@ use crate::commands::flow_monitor_cmd::{
     SessionManagerState,
 };
 use crate::commands::machine_id_cmd::MachineIdState;
+use crate::commands::model_registry_cmd::ModelRegistryState;
 use crate::commands::orchestrator_cmd::OrchestratorState;
 use crate::commands::plugin_cmd::PluginManagerState;
 use crate::commands::plugin_install_cmd::PluginInstallerState;
@@ -132,6 +133,7 @@ pub struct AppStates {
     pub oauth_plugin_manager: crate::commands::oauth_plugin_cmd::OAuthPluginManagerState,
     pub orchestrator: OrchestratorState,
     pub connect_state: ConnectStateWrapper,
+    pub model_registry: ModelRegistryState,
     // 用于 setup hook 的共享实例
     pub shared_stats: Arc<parking_lot::RwLock<telemetry::StatsAggregator>>,
     pub shared_tokens: Arc<parking_lot::RwLock<telemetry::TokenTracker>>,
@@ -207,6 +209,9 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     // 初始化 Connect 状态（延迟初始化，在 setup hook 中完成）
     let connect_state = ConnectStateWrapper(Arc::new(RwLock::new(None)));
 
+    // 初始化 Model Registry 状态（延迟初始化，在 setup hook 中完成）
+    let model_registry_state: ModelRegistryState = Arc::new(RwLock::new(None));
+
     // 初始化默认技能仓库
     {
         let conn = db.lock().expect("Failed to lock database");
@@ -242,6 +247,7 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         oauth_plugin_manager: oauth_plugin_manager_state,
         orchestrator: orchestrator_state,
         connect_state,
+        model_registry: model_registry_state,
         shared_stats,
         shared_tokens,
         shared_logger,

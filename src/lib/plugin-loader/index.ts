@@ -32,6 +32,47 @@ export interface PluginModule {
 const loadedPlugins = new Map<string, PluginModule>();
 
 /**
+ * 插件 ID 到全局变量名的映射
+ * 格式: pluginId -> GlobalVariableName
+ */
+const PLUGIN_GLOBAL_NAMES: Record<string, string> = {
+  "kiro-provider": "KiroProviderPlugin",
+  "droid-provider": "DroidProviderPlugin",
+  "claude-provider": "ClaudeProviderPlugin",
+  "gemini-provider": "GeminiProviderPlugin",
+  "antigravity-provider": "AntigravityProviderPlugin",
+};
+
+/**
+ * 根据插件 ID 获取全局变量名
+ * 如果没有预定义，则尝试从路径推断
+ */
+function getPluginGlobalName(pluginPath: string): string {
+  // 从路径中提取插件 ID
+  const parts = pluginPath.split("/");
+  const pluginIdIndex = parts.findIndex((p) => p.endsWith("-provider"));
+  const pluginId = pluginIdIndex >= 0 ? parts[pluginIdIndex] : null;
+
+  // 查找预定义的全局变量名
+  if (pluginId && PLUGIN_GLOBAL_NAMES[pluginId]) {
+    return PLUGIN_GLOBAL_NAMES[pluginId];
+  }
+
+  // 尝试从插件 ID 推断全局变量名
+  // 例如: my-plugin -> MyPluginPlugin
+  if (pluginId) {
+    const camelCase = pluginId
+      .split("-")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join("");
+    return camelCase;
+  }
+
+  // 默认回退
+  return "KiroProviderPlugin";
+}
+
+/**
  * 读取插件文件内容
  */
 async function readPluginFile(filePath: string): Promise<string> {
@@ -92,22 +133,26 @@ export async function loadPluginUI(
     // 读取插件文件内容
     const content = await readPluginFile(pluginPath);
 
+    // 获取插件的全局变量名
+    const globalName = getPluginGlobalName(pluginPath);
+
     console.log(`[PluginLoader] 加载插件: ${pluginPath}`);
+    console.log(`[PluginLoader] 全局变量名: ${globalName}`);
     console.log(
       `[PluginLoader] 全局变量检查: React=${typeof (window as unknown as Record<string, unknown>).React}, ProxyCastPluginComponents=${typeof (window as unknown as Record<string, unknown>).ProxyCastPluginComponents}`,
     );
 
     // 执行插件代码
-    // IIFE 格式会自动将结果赋值给 window.KiroProviderPlugin
     await executeScript(content);
 
     // 获取插件模块
-    const pluginExports = (window as unknown as Record<string, unknown>)
-      .KiroProviderPlugin as Record<string, unknown> | undefined;
+    const pluginExports = (window as unknown as Record<string, unknown>)[
+      globalName
+    ] as Record<string, unknown> | undefined;
 
     if (!pluginExports) {
       console.error(
-        `[PluginLoader] 插件 ${pluginPath} 没有导出到 window.KiroProviderPlugin`,
+        `[PluginLoader] 插件 ${pluginPath} 没有导出到 window.${globalName}`,
       );
       return null;
     }

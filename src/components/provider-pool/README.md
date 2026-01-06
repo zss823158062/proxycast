@@ -13,11 +13,13 @@
 | `EditCredentialModal.tsx` | 编辑凭证模态框组件 |
 | `ErrorDisplay.tsx` | 错误显示组件 |
 | `UsageDisplay.tsx` | 用量显示组件 |
+| `RelayProvidersSection.tsx` | Connect 中转商列表组件，展示已验证的中转服务商 |
 | `VertexAISection.tsx` | Vertex AI 配置区域组件 |
 | `AmpConfigSection.tsx` | Amp CLI 配置区域组件 |
 | `GeminiApiKeySection.tsx` | Gemini API Key 配置区域组件 |
 | `CodexSection.tsx` | Codex 配置区域组件 |
 | `IFlowSection.tsx` | iFlow 配置区域组件 |
+| `OAuthPluginTab.tsx` | OAuth 插件标签页组件 |
 | `index.ts` | 组件导出入口 |
 
 ## 子目录
@@ -50,10 +52,12 @@ function App() {
 - Requirements 1.1: API Key Provider 左右分栏布局
 - Requirements 2.1, 2.2, 2.3: OAuth 凭证保持卡片布局
 - Requirements 3.1-3.6: 完整支持 System Provider 类型
+- Connect: 中转商浏览和一键添加功能
 
 ## 架构说明
 
-ProviderPoolPage 支持三种分类：
+ProviderPoolPage 支持四种分类：
 1. **OAuth 凭证** - 使用卡片式布局显示 OAuth 类型凭证
 2. **API Key** - 使用左右分栏布局（ApiKeyProviderSection）
-3. **其他配置** - Vertex AI 和 Amp CLI 配置
+3. **OAuth 插件** - 第三方 OAuth 插件管理
+4. **Connect** - 中转商列表，支持浏览和一键获取 API Key

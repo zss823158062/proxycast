@@ -71,6 +71,10 @@ interface RecommendedOAuthPlugin {
   downloadUrl: string;
   /** 标签 */
   tags?: string[];
+  /** 是否推荐 */
+  recommended?: boolean;
+  /** 是否可安装（false 表示即将推出） */
+  available?: boolean;
 }
 
 /**
@@ -87,11 +91,13 @@ const recommendedOAuthPlugins: RecommendedOAuthPlugin[] = [
       type: "git_hub",
       owner: "aiclientproxy",
       repo: "kiro-provider",
-      version: "v0.2.0",
+      version: "v0.3.0",
     },
     downloadUrl:
-      "https://github.com/aiclientproxy/kiro-provider/releases/download/v0.2.0/kiro-provider-plugin.zip",
+      "https://github.com/aiclientproxy/kiro-provider/releases/download/v0.3.0/kiro-provider-plugin.zip",
     tags: ["anthropic", "免费"],
+    recommended: true,
+    available: true,
   },
   {
     id: "antigravity-provider",
@@ -104,11 +110,13 @@ const recommendedOAuthPlugins: RecommendedOAuthPlugin[] = [
       type: "git_hub",
       owner: "aiclientproxy",
       repo: "antigravity-provider",
-      version: "v0.1.0",
+      version: "v0.4.0",
     },
     downloadUrl:
-      "https://github.com/aiclientproxy/antigravity-provider/releases/download/v0.1.0/antigravity-provider-plugin.zip",
+      "https://github.com/aiclientproxy/antigravity-provider/releases/download/v0.4.0/antigravity-provider-plugin.zip",
     tags: ["gemini", "claude", "免费"],
+    recommended: true,
+    available: true,
   },
   {
     id: "claude-provider",
@@ -120,11 +128,13 @@ const recommendedOAuthPlugins: RecommendedOAuthPlugin[] = [
       type: "git_hub",
       owner: "aiclientproxy",
       repo: "claude-provider",
-      version: "v0.1.0",
+      version: "v0.2.0",
     },
     downloadUrl:
-      "https://github.com/aiclientproxy/claude-provider/releases/download/v0.1.0/claude-provider-plugin.zip",
+      "https://github.com/aiclientproxy/claude-provider/releases/download/v0.2.0/claude-provider-plugin.zip",
     tags: ["anthropic", "官方"],
+    recommended: false,
+    available: true,
   },
   {
     id: "droid-provider",
@@ -137,11 +147,13 @@ const recommendedOAuthPlugins: RecommendedOAuthPlugin[] = [
       type: "git_hub",
       owner: "aiclientproxy",
       repo: "droid-provider",
-      version: "v0.1.0",
+      version: "v0.2.0",
     },
     downloadUrl:
-      "https://github.com/aiclientproxy/droid-provider/releases/download/v0.1.0/droid-provider-plugin.zip",
+      "https://github.com/aiclientproxy/droid-provider/releases/download/v0.2.0/droid-provider-plugin.zip",
     tags: ["anthropic", "openai"],
+    recommended: false,
+    available: true,
   },
   {
     id: "gemini-provider",
@@ -153,11 +165,13 @@ const recommendedOAuthPlugins: RecommendedOAuthPlugin[] = [
       type: "git_hub",
       owner: "aiclientproxy",
       repo: "gemini-provider",
-      version: "v0.1.0",
+      version: "v0.2.0",
     },
     downloadUrl:
-      "https://github.com/aiclientproxy/gemini-provider/releases/download/v0.1.0/gemini-provider-plugin.zip",
+      "https://github.com/aiclientproxy/gemini-provider/releases/download/v0.2.0/gemini-provider-plugin.zip",
     tags: ["gemini", "API Key"],
+    recommended: false,
+    available: true,
   },
 ];
 
@@ -181,13 +195,17 @@ const RecommendedPluginCard: React.FC<{
   };
 
   return (
-    <Card className="relative transition-shadow hover:shadow-md">
-      <Badge
-        className="absolute -top-2 -right-2 bg-green-500"
-        variant="default"
-      >
-        推荐
-      </Badge>
+    <Card
+      className={`relative transition-shadow hover:shadow-md ${!plugin.available ? "opacity-70" : ""}`}
+    >
+      {plugin.recommended && (
+        <Badge
+          className="absolute -top-2 -right-2 bg-green-500"
+          variant="default"
+        >
+          推荐
+        </Badge>
+      )}
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2">
@@ -220,19 +238,25 @@ const RecommendedPluginCard: React.FC<{
         </div>
       </CardContent>
       <CardFooter className="pt-2">
-        <Button className="w-full" onClick={onInstall} disabled={installing}>
-          {installing ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              安装中...
-            </>
-          ) : (
-            <>
-              <Download className="h-4 w-4 mr-2" />
-              一键安装
-            </>
-          )}
-        </Button>
+        {plugin.available ? (
+          <Button className="w-full" onClick={onInstall} disabled={installing}>
+            {installing ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                安装中...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4 mr-2" />
+                一键安装
+              </>
+            )}
+          </Button>
+        ) : (
+          <Button className="w-full" variant="secondary" disabled>
+            即将推出
+          </Button>
+        )}
       </CardFooter>
     </Card>
   );
@@ -433,7 +457,10 @@ const PluginDetailView: React.FC<{
             fallback={
               <div className="flex flex-col items-center justify-center p-8 text-muted-foreground">
                 <Package className="h-12 w-12 mb-4 opacity-50" />
-                <p>该插件没有提供 UI</p>
+                <p className="text-center">该插件暂无 UI 界面</p>
+                <p className="text-center text-sm mt-2 opacity-70">
+                  请通过凭证池页面的「OAuth 凭证」标签管理此插件的凭证
+                </p>
               </div>
             }
           />
@@ -678,16 +705,53 @@ export const OAuthPluginTab: React.FC = () => {
         </Card>
       )}
 
-      {/* 推荐插件 */}
+      {/* 已安装插件 - 放在上面 */}
+      {filteredPlugins.length > 0 && (
+        <div className="rounded-lg border bg-card">
+          <div className="p-4 border-b">
+            <h4 className="font-semibold flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              已安装插件
+            </h4>
+            <p className="text-sm text-muted-foreground mt-1">
+              点击卡片进入插件详情，管理凭证
+            </p>
+          </div>
+          <div className="p-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredPlugins.map((plugin) => (
+                <PluginCard
+                  key={plugin.id}
+                  plugin={plugin}
+                  update={updates.find((u) => u.pluginId === plugin.id)}
+                  onSelect={() => setSelectedPluginId(plugin.id)}
+                  onToggle={() => handleToggle(plugin)}
+                  onUninstall={() => {
+                    setPluginToUninstall(plugin.id);
+                    setUninstallDialogOpen(true);
+                  }}
+                  onUpdate={
+                    updates.find((u) => u.pluginId === plugin.id)
+                      ? () => update(plugin.id)
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 推荐插件 - 放在下面 */}
       {uninstalledRecommendedPlugins.length > 0 && (
         <div className="rounded-lg border bg-card">
           <div className="p-4 border-b">
             <h4 className="font-semibold flex items-center gap-2">
               <Download className="h-4 w-4" />
-              推荐 OAuth Provider 插件
+              可安装的 OAuth Provider 插件
             </h4>
             <p className="text-sm text-muted-foreground mt-1">
-              一键安装推荐的 OAuth Provider 插件，快速扩展支持的 AI 服务
+              一键安装 OAuth Provider 插件，快速扩展支持的 AI 服务
             </p>
           </div>
           <div className="p-4">
@@ -705,45 +769,25 @@ export const OAuthPluginTab: React.FC = () => {
         </div>
       )}
 
-      {/* 插件列表 */}
-      {filteredPlugins.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-16 border rounded-lg border-dashed">
-          <Package className="h-12 w-12 text-muted-foreground mb-4" />
-          <p className="text-muted-foreground mb-2">
-            {searchQuery ? "没有找到匹配的插件" : "暂无已安装的插件"}
-          </p>
-          {!searchQuery && (
-            <Button
-              variant="outline"
-              onClick={() => setInstallDialogOpen(true)}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              安装第一个插件
-            </Button>
-          )}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredPlugins.map((plugin) => (
-            <PluginCard
-              key={plugin.id}
-              plugin={plugin}
-              update={updates.find((u) => u.pluginId === plugin.id)}
-              onSelect={() => setSelectedPluginId(plugin.id)}
-              onToggle={() => handleToggle(plugin)}
-              onUninstall={() => {
-                setPluginToUninstall(plugin.id);
-                setUninstallDialogOpen(true);
-              }}
-              onUpdate={
-                updates.find((u) => u.pluginId === plugin.id)
-                  ? () => update(plugin.id)
-                  : undefined
-              }
-            />
-          ))}
-        </div>
-      )}
+      {/* 空状态 - 没有已安装插件且没有推荐插件 */}
+      {filteredPlugins.length === 0 &&
+        uninstalledRecommendedPlugins.length === 0 && (
+          <div className="flex flex-col items-center justify-center p-16 border rounded-lg border-dashed">
+            <Package className="h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground mb-2">
+              {searchQuery ? "没有找到匹配的插件" : "暂无可用的插件"}
+            </p>
+            {!searchQuery && (
+              <Button
+                variant="outline"
+                onClick={() => setInstallDialogOpen(true)}
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                手动安装插件
+              </Button>
+            )}
+          </div>
+        )}
 
       {/* 安装对话框 */}
       <InstallPluginDialog

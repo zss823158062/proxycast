@@ -64,11 +64,11 @@ export function ModelList({
   return (
     <div className={cn("space-y-2", className)}>
       {models.map((model) => {
-        const isSelected = model.model_id === selectedModelId;
+        const isSelected = model.id === selectedModelId;
 
         return (
           <button
-            key={`${model.model_id}-${model.credential_id}`}
+            key={`${model.id}-${model.credential_id}`}
             type="button"
             onClick={() => onSelectModel?.(model)}
             className={cn(

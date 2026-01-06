@@ -589,13 +589,10 @@ pub fn convert_openai_to_antigravity_with_context(
     }
 
     // 转换工具定义
-    // 注意：Antigravity API 统一使用 Gemini 格式（function_declarations）
-    // Claude 模型在 Antigravity 内部会自动转换
+    // 注意：Antigravity API 统一使用 functionDeclarations 格式
+    // Claude 和 Gemini 模型都使用相同的结构，但字段名可能不同
     let tools: Option<serde_json::Value> = request.tools.as_ref().and_then(|tools| {
         let is_claude = is_claude_model(actual_model);
-
-        // Gemini 模型使用 function_declarations + parametersJsonSchema
-        // Claude 模型使用 function_declarations + inputSchema（注意字段名不同）
         let mut function_declarations: Vec<serde_json::Value> = Vec::new();
 
         for t in tools {
@@ -605,7 +602,8 @@ pub fn convert_openai_to_antigravity_with_context(
                         .parameters
                         .as_ref()
                         .map(|p| {
-                            let mut schema = clean_parameters(Some(p.clone())).unwrap_or_default();
+                            let mut schema =
+                                clean_parameters(Some(p.clone())).unwrap_or_default();
                             // 确保有 type 和 properties
                             if schema.get("type").is_none() {
                                 schema["type"] = serde_json::json!("object");
@@ -615,20 +613,22 @@ pub fn convert_openai_to_antigravity_with_context(
                             }
                             schema
                         })
-                        .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+                        .unwrap_or_else(|| {
+                            serde_json::json!({"type": "object", "properties": {}})
+                        });
 
                     if is_claude {
-                        // Claude 模型使用 inputSchema 字段名
+                        // Claude 模型使用 parameters 字段（标准 Gemini 格式）
                         function_declarations.push(serde_json::json!({
                             "name": function.name,
                             "description": function.description.clone().unwrap_or_default(),
-                            "inputSchema": params_schema
+                            "parameters": params_schema
                         }));
                     } else {
-                        // Gemini 模型使用 parametersJsonSchema 字段名
+                        // Gemini 模型使用 parametersJsonSchema 字段
                         function_declarations.push(serde_json::json!({
                             "name": function.name,
-                            "description": function.description.clone(),
+                            "description": function.description.clone().unwrap_or_default(),
                             "parametersJsonSchema": params_schema
                         }));
                     }

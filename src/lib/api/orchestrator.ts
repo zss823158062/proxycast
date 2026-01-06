@@ -27,23 +27,29 @@ export type TaskHint =
 /** 可用模型 */
 export interface AvailableModel {
   /** 模型 ID */
-  model_id: string;
+  id: string;
   /** 显示名称 */
   display_name: string;
   /** Provider 类型 */
   provider_type: string;
+  /** 模型家族 */
+  family?: string;
   /** 凭证 ID */
   credential_id: string;
+  /** 上下文长度 */
+  context_length?: number;
+  /** 是否支持视觉 */
+  supports_vision: boolean;
+  /** 是否支持工具 */
+  supports_tools: boolean;
+  /** 输入价格（每 1M tokens） */
+  input_cost_per_million?: number;
+  /** 输出价格（每 1M tokens） */
+  output_cost_per_million?: number;
   /** 是否健康 */
   is_healthy: boolean;
   /** 当前负载 (0-100) */
   current_load?: number;
-  /** 上下文长度 */
-  context_length?: number;
-  /** 是否支持视觉 */
-  supports_vision?: boolean;
-  /** 是否支持工具 */
-  supports_tools?: boolean;
 }
 
 /** 模型池统计 */
@@ -62,16 +68,20 @@ export interface PoolStats {
 
 /** 选择结果 */
 export interface SelectionResult {
-  /** 选中的模型 ID */
-  model_id: string;
-  /** Provider 类型 */
-  provider_type: string;
-  /** 凭证 ID */
-  credential_id: string;
-  /** 使用的策略 */
-  strategy_used: string;
+  /** 选中的模型 */
+  model: AvailableModel;
+  /** 使用的策略 ID */
+  strategy_id: string;
   /** 选择原因 */
-  reason?: string;
+  reason: string;
+  /** 置信度 (0-100) */
+  confidence: number;
+  /** 服务等级 */
+  tier: ServiceTier;
+  /** 是否是降级选择 */
+  is_fallback: boolean;
+  /** 降级原因（如果是降级） */
+  fallback_reason?: string;
 }
 
 /** 选择请求 */

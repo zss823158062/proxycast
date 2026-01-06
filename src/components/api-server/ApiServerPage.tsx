@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { LogsTab } from "./LogsTab";
 import { RoutesTab } from "./RoutesTab";
+import { EnhancedModelsTab } from "./EnhancedModelsTab";
 import { ProviderIcon } from "@/icons/providers";
 import {
   startServer,
@@ -40,7 +41,7 @@ interface TestState {
   httpStatus?: number;
 }
 
-type TabId = "server" | "routes" | "logs";
+type TabId = "server" | "routes" | "models" | "logs";
 
 // 可用的 Provider 信息（合并 OAuth 凭证池和 API Key Provider）
 interface AvailableProvider {
@@ -670,6 +671,7 @@ export function ApiServerPage() {
         {[
           { id: "server" as TabId, name: "服务器控制" },
           { id: "routes" as TabId, name: "路由端点" },
+          { id: "models" as TabId, name: "模型列表" },
           { id: "logs" as TabId, name: "系统日志" },
         ].map((tab) => (
           <button
@@ -1016,6 +1018,9 @@ export function ApiServerPage() {
 
       {/* Routes Tab */}
       {activeTab === "routes" && <RoutesTab />}
+
+      {/* Models Tab */}
+      {activeTab === "models" && <EnhancedModelsTab />}
 
       {/* Logs Tab */}
       {activeTab === "logs" && <LogsTab />}

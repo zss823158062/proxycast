@@ -454,6 +454,89 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // ProxyCast Connect 相关表
     // ============================================================================
 
+    // ============================================================================
+    // Model Registry 相关表 (借鉴 opencode 的模型管理方式)
+    // ============================================================================
+
+    // 增强的模型注册表
+    // 存储从 models.dev API 获取的模型数据 + 本地补充的国内模型数据
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS model_registry (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            provider_name TEXT NOT NULL,
+            family TEXT,
+            tier TEXT NOT NULL DEFAULT 'pro',
+            capabilities TEXT NOT NULL DEFAULT '{}',
+            pricing TEXT,
+            limits TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'active',
+            release_date TEXT,
+            is_latest INTEGER DEFAULT 0,
+            description TEXT,
+            source TEXT NOT NULL DEFAULT 'local',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    // 创建 model_registry 索引
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_provider ON model_registry(provider_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_tier ON model_registry(tier)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_family ON model_registry(family)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_source ON model_registry(source)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_status ON model_registry(status)",
+        [],
+    )?;
+
+    // 用户模型偏好表
+    // 存储用户的收藏、隐藏、使用统计等偏好
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS user_model_preferences (
+            model_id TEXT PRIMARY KEY,
+            is_favorite INTEGER DEFAULT 0,
+            is_hidden INTEGER DEFAULT 0,
+            custom_alias TEXT,
+            usage_count INTEGER DEFAULT 0,
+            last_used_at INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    // 创建 user_model_preferences 索引
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_model_preferences_favorite ON user_model_preferences(is_favorite)",
+        [],
+    )?;
+
+    // 模型同步状态表
+    // 记录 models.dev API 同步状态
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS model_sync_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 

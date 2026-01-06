@@ -137,6 +137,18 @@ export function useAgentChat() {
     savePersisted("agent_pref_model", model);
   }, [model]);
 
+  // 当 provider 改变时，检查当前模型是否兼容
+  // 如果不兼容，自动切换到新 provider 的第一个模型
+  useEffect(() => {
+    const currentProviderModels = providerConfig[providerType]?.models || [];
+    if (currentProviderModels.length > 0 && !currentProviderModels.includes(model)) {
+      console.log(
+        `[useAgentChat] 模型 ${model} 不在 ${providerType} 支持列表中，自动切换到 ${currentProviderModels[0]}`
+      );
+      setModel(currentProviderModels[0]);
+    }
+  }, [providerType, providerConfig, model]);
+
   useEffect(() => {
     saveTransient("agent_curr_sessionId", sessionId);
   }, [sessionId]);

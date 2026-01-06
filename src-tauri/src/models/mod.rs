@@ -4,6 +4,7 @@ pub mod codewhisperer;
 pub mod kiro_fingerprint;
 pub mod machine_id;
 pub mod mcp_model;
+pub mod model_registry;
 pub mod openai;
 pub mod prompt_model;
 pub mod provider_model;

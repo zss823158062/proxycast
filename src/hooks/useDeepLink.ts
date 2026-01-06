@@ -54,6 +54,10 @@ export interface RelayLinks {
   docs?: string;
   /** 状态页链接 */
   status?: string;
+  /** 控制台/仪表盘链接 */
+  dashboard?: string;
+  /** 网站链接 */
+  website?: string;
 }
 
 /**
@@ -92,6 +96,8 @@ export interface RelayFeatures {
   function_calling: boolean;
   /** 是否支持视觉模型 */
   vision: boolean;
+  /** 是否已验证 */
+  verified?: boolean;
 }
 
 /**

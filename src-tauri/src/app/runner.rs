@@ -71,6 +71,7 @@ pub fn run() {
         oauth_plugin_manager: oauth_plugin_manager_state,
         orchestrator: orchestrator_state,
         connect_state: connect_state,
+        model_registry: model_registry_state,
         shared_stats,
         shared_tokens,
         shared_logger,
@@ -145,6 +146,7 @@ pub fn run() {
         .manage(oauth_plugin_manager_state)
         .manage(orchestrator_state)
         .manage(connect_state)
+        .manage(model_registry_state)
         .on_window_event(move |window, event| {
             // 处理窗口关闭事件
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -214,6 +216,33 @@ pub fn run() {
                         }
                         Err(e) => {
                             tracing::error!("[启动] Connect 模块初始化失败: {:?}", e);
+                        }
+                    }
+                });
+            }
+
+            // 初始化 Model Registry 服务
+            {
+                let app_handle = app.handle().clone();
+                let db_clone = db_clone.clone();
+                tauri::async_runtime::spawn(async move {
+                    // 创建 ModelRegistryService
+                    let service = crate::services::model_registry_service::ModelRegistryService::new(db_clone);
+
+                    // 初始化服务
+                    match service.initialize().await {
+                        Ok(()) => {
+                            tracing::info!("[启动] Model Registry 服务初始化成功");
+                            // 更新状态
+                            if let Some(state) = app_handle
+                                .try_state::<crate::commands::model_registry_cmd::ModelRegistryState>()
+                            {
+                                let mut guard = state.write().await;
+                                *guard = Some(service);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("[启动] Model Registry 服务初始化失败: {}", e);
                         }
                     }
                 });
@@ -984,6 +1013,17 @@ pub fn run() {
             commands::connect_cmd::refresh_relay_registry,
             commands::connect_cmd::list_relay_providers,
             commands::connect_cmd::send_connect_callback,
+            // Model Registry commands
+            commands::model_registry_cmd::get_model_registry,
+            commands::model_registry_cmd::refresh_model_registry,
+            commands::model_registry_cmd::search_models,
+            commands::model_registry_cmd::get_model_preferences,
+            commands::model_registry_cmd::toggle_model_favorite,
+            commands::model_registry_cmd::hide_model,
+            commands::model_registry_cmd::record_model_usage,
+            commands::model_registry_cmd::get_model_sync_state,
+            commands::model_registry_cmd::get_models_for_provider,
+            commands::model_registry_cmd::get_models_by_tier,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

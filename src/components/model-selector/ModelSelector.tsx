@@ -165,7 +165,7 @@ export function ModelSelector({
       {mode === "expert" && (
         <ModelList
           models={models}
-          selectedModelId={selectedModel?.model_id}
+          selectedModelId={selectedModel?.id}
           onSelectModel={handleModelSelect}
           loading={modelsLoading}
           error={modelsError}

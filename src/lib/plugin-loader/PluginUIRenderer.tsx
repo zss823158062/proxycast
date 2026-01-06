@@ -117,6 +117,24 @@ export function PluginUIRenderer({
 
   // 错误
   if (error) {
+    // 检查是否是文件不存在的错误
+    const isFileNotFound = error.includes("读取插件 UI 文件失败") || 
+                           error.includes("No such file") ||
+                           error.includes("not found") ||
+                           error.includes("没有找到有效的组件导出") ||
+                           error.includes("插件加载失败");
+    
+    if (isFileNotFound) {
+      // UI 文件不存在时显示友好提示
+      return fallback ? <>{fallback}</> : (
+        <div className={`flex flex-col items-center justify-center p-8 text-muted-foreground ${className}`}>
+          <AlertCircle className="h-8 w-8 mb-2 opacity-50" />
+          <p className="text-center text-sm">该插件暂无 UI 界面</p>
+          <p className="text-center text-xs mt-1 opacity-70">请通过命令行或 API 使用此插件</p>
+        </div>
+      );
+    }
+    
     return (
       <div
         className={`flex flex-col items-center justify-center p-8 ${className}`}

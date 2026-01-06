@@ -31,12 +31,11 @@ import { AddCredentialModal } from "./AddCredentialModal";
 import { EditCredentialModal } from "./EditCredentialModal";
 import { ErrorDisplay, useErrorDisplay } from "./ErrorDisplay";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
-import { VertexAISection } from "./VertexAISection";
-import { AmpConfigSection } from "./AmpConfigSection";
+import { getConfig } from "@/hooks/useTauri";
 import { ProviderIcon } from "@/icons/providers";
 import { ApiKeyProviderSection, AddCustomProviderModal } from "./api-key";
 import { OAuthPluginTab } from "./OAuthPluginTab";
+import { RelayProvidersSection } from "./RelayProvidersSection";
 import type { AddCustomProviderRequest } from "@/lib/api/apiKeyProvider";
 import {
   getLocalKiroCredentialUuid,
@@ -60,8 +59,8 @@ const oauthProviderTypes: PoolProviderType[] = [
   "iflow",
 ];
 
-// 配置类型 tab（非凭证池，存储在配置文件中）
-type ConfigTabType = "vertex" | "amp";
+// 配置类型 tab（非凭证池）
+type ConfigTabType = "connect";
 
 // 所有 tab 类型
 type TabType = PoolProviderType | ConfigTabType;
@@ -79,18 +78,13 @@ const providerLabels: Record<PoolProviderType, string> = {
   gemini_api_key: "Gemini",
 };
 
-const configTabLabels: Record<ConfigTabType, string> = {
-  vertex: "Vertex AI",
-  amp: "Amp CLI",
-};
-
 // 判断是否为配置类型 tab
 const isConfigTab = (tab: TabType): tab is ConfigTabType => {
-  return ["vertex", "amp"].includes(tab);
+  return tab === "connect";
 };
 
 // 分类类型
-type CategoryType = "oauth" | "apikey" | "plugins" | "config";
+type CategoryType = "oauth" | "apikey" | "plugins" | "connect";
 
 export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
   (_props, ref) => {
@@ -136,45 +130,6 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
 
     // Kiro 本地活跃凭证 UUID
     const [localActiveUuid, setLocalActiveUuid] = useState<string | null>(null);
-
-    // 配置 tab 相关状态
-    const [config, setConfig] = useState<Config | null>(null);
-    const [configLoading, setConfigLoading] = useState(false);
-    const [configSaving, setConfigSaving] = useState(false);
-
-    // 加载配置
-    const loadConfig = async () => {
-      setConfigLoading(true);
-      try {
-        const c = await getConfig();
-        setConfig(c);
-      } catch (e) {
-        console.error("Failed to load config:", e);
-        showError("加载配置失败", "config");
-      }
-      setConfigLoading(false);
-    };
-
-    // 保存配置
-    const handleSaveConfig = async () => {
-      if (!config) return;
-      setConfigSaving(true);
-      try {
-        await saveConfig(config);
-        showSuccess("配置已保存");
-      } catch (e) {
-        showError(e instanceof Error ? e.message : String(e), "config");
-      }
-      setConfigSaving(false);
-    };
-
-    // 切换到配置 tab 时加载配置
-    useEffect(() => {
-      if (isConfigTab(activeTab)) {
-        loadConfig();
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab]);
 
     // 获取本地活跃的 Kiro 凭证 UUID
     const fetchLocalActiveUuid = async () => {
@@ -443,17 +398,17 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
           </button>
           <button
             onClick={() => {
-              setActiveCategory("config");
-              setActiveTab("vertex");
+              setActiveCategory("connect");
+              setActiveTab("connect");
             }}
             className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
-              activeCategory === "config"
+              activeCategory === "connect"
                 ? "border-primary bg-primary/10 text-primary"
                 : "border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted"
             }`}
-            data-testid="config-category-tab"
+            data-testid="connect-category-tab"
           >
-            其他配置
+            Connect
           </button>
         </div>
 
@@ -497,26 +452,10 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
           </div>
         )}
 
-        {/* 其他配置分类 - 配置 Tab 选择 */}
-        {activeCategory === "config" && (
-          <div className="flex flex-wrap gap-2">
-            {(["vertex", "amp"] as const).map((tabId) => {
-              const isActive = activeTab === tabId;
-              return (
-                <button
-                  key={tabId}
-                  onClick={() => setActiveTab(tabId)}
-                  className={`min-w-[120px] px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
-                    isActive
-                      ? "border-primary bg-primary/10 text-primary shadow-sm"
-                      : "border-border bg-card hover:border-primary/50 hover:bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                  data-testid={`config-tab-${tabId}`}
-                >
-                  {configTabLabels[tabId]}
-                </button>
-              );
-            })}
+        {/* Connect 分类 - 中转商列表 */}
+        {activeCategory === "connect" && (
+          <div className="min-h-[400px]" data-testid="connect-section">
+            <RelayProvidersSection />
           </div>
         )}
 
@@ -538,67 +477,6 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
             <OAuthPluginTab />
           </div>
         )}
-
-        {/* 配置 Tab 内容 */}
-        {activeCategory === "config" &&
-          isConfigTab(activeTab) &&
-          (configLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : config ? (
-            <div className="space-y-4">
-              {activeTab === "vertex" && (
-                <>
-                  <VertexAISection
-                    entries={config.credential_pool?.vertex_api_keys ?? []}
-                    onChange={(entries) =>
-                      setConfig({
-                        ...config,
-                        credential_pool: {
-                          ...config.credential_pool,
-                          vertex_api_keys: entries,
-                        },
-                      })
-                    }
-                  />
-                  {(config.credential_pool?.vertex_api_keys?.length ?? 0) >
-                    0 && (
-                    <button
-                      onClick={handleSaveConfig}
-                      disabled={configSaving}
-                      className="w-full px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-                    >
-                      {configSaving ? "保存中..." : "保存配置"}
-                    </button>
-                  )}
-                </>
-              )}
-
-              {activeTab === "amp" && (
-                <AmpConfigSection
-                  config={
-                    config.ampcode ?? {
-                      upstream_url: null,
-                      model_mappings: [],
-                      restrict_management_to_localhost: false,
-                    }
-                  }
-                  onChange={(ampConfig) =>
-                    setConfig({
-                      ...config,
-                      ampcode: ampConfig,
-                    })
-                  }
-                  onSave={handleSaveConfig}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center py-12 text-muted-foreground">
-              加载配置失败
-            </div>
-          ))}
 
         {/* OAuth 凭证内容 - 卡片布局 */}
         {activeCategory === "oauth" &&

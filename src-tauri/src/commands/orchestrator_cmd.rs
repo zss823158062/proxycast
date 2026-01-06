@@ -65,10 +65,13 @@ pub async fn init_orchestrator(
         .map(|c| {
             // 从 credential 中提取支持的模型列表
             let supported_models = extract_supported_models(&c.credential);
+            // 保存原始的 provider_type 字符串（如 "antigravity"、"kiro" 等）
+            let original_provider_type = c.provider_type.to_string();
 
             CredentialInfo {
                 id: c.uuid.clone(),
-                provider_type: map_pool_provider_type(&c.provider_type.to_string()),
+                provider_type: map_pool_provider_type(&original_provider_type),
+                original_provider_type: Some(original_provider_type),
                 supported_models,
                 is_healthy: c.is_healthy,
                 current_load: None,
@@ -95,34 +98,47 @@ fn extract_supported_models(
         CredentialData::ClaudeKey { .. } | CredentialData::ClaudeOAuth { .. } => {
             vec![
                 "claude-opus-4-5-20251101".to_string(),
+                "claude-opus-4-20250514".to_string(),
                 "claude-sonnet-4-5-20250929".to_string(),
                 "claude-sonnet-4-20250514".to_string(),
+                "claude-haiku-4-5-20251001".to_string(),
+                "claude-3-7-sonnet-20250219".to_string(),
                 "claude-3-5-haiku-20241022".to_string(),
             ]
         }
         CredentialData::OpenAIKey { .. } => {
             vec![
+                "gpt-5.2-codex".to_string(),
+                "gpt-5.2".to_string(),
+                "gpt-5.1-codex-max".to_string(),
+                "gpt-5.1-codex".to_string(),
+                "gpt-5.1-codex-mini".to_string(),
+                "gpt-5.1".to_string(),
+                "gpt-5-codex".to_string(),
+                "gpt-5-codex-mini".to_string(),
+                "gpt-5".to_string(),
                 "gpt-4o".to_string(),
                 "gpt-4o-mini".to_string(),
-                "gpt-4-turbo".to_string(),
-                "o1".to_string(),
-                "o1-mini".to_string(),
             ]
         }
         CredentialData::GeminiOAuth { .. } => {
             vec![
-                "gemini-2.0-flash-exp".to_string(),
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
+                "gemini-3-pro-preview".to_string(),
+                "gemini-3-flash-preview".to_string(),
+                "gemini-2.5-pro".to_string(),
+                "gemini-2.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
             ]
         }
         CredentialData::GeminiApiKey {
             excluded_models, ..
         } => {
             let all_models = vec![
-                "gemini-2.0-flash-exp".to_string(),
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
+                "gemini-3-pro-preview".to_string(),
+                "gemini-3-flash-preview".to_string(),
+                "gemini-2.5-pro".to_string(),
+                "gemini-2.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
             ];
             all_models
                 .into_iter()
@@ -131,8 +147,13 @@ fn extract_supported_models(
         }
         CredentialData::KiroOAuth { .. } => {
             vec![
+                "claude-opus-4-5".to_string(),
+                "claude-opus-4-5-20251101".to_string(),
+                "claude-haiku-4-5".to_string(),
+                "claude-sonnet-4-5".to_string(),
                 "claude-sonnet-4-5-20250929".to_string(),
                 "claude-sonnet-4-20250514".to_string(),
+                "claude-3-7-sonnet-20250219".to_string(),
             ]
         }
         CredentialData::CodexOAuth { .. } => {
@@ -140,16 +161,23 @@ fn extract_supported_models(
         }
         CredentialData::QwenOAuth { .. } => {
             vec![
-                "qwen-max".to_string(),
-                "qwen-plus".to_string(),
-                "qwen-turbo".to_string(),
+                "qwen3-coder-plus".to_string(),
+                "qwen3-coder-flash".to_string(),
             ]
         }
         CredentialData::AntigravityOAuth { .. } => {
             vec![
+                // Max 等级
+                "gemini-3-pro-preview".to_string(),
+                "gemini-3-pro-image-preview".to_string(),
+                "gemini-claude-opus-4-5-thinking".to_string(),
+                // Pro 等级
+                "gemini-2.5-flash".to_string(),
+                "gemini-2.5-computer-use-preview-10-2025".to_string(),
                 "gemini-claude-sonnet-4-5".to_string(),
                 "gemini-claude-sonnet-4-5-thinking".to_string(),
-                "gemini-claude-opus-4-5-thinking".to_string(),
+                // Mini 等级
+                "gemini-3-flash-preview".to_string(),
             ]
         }
         _ => vec![],
@@ -165,6 +193,7 @@ fn map_pool_provider_type(pool_type: &str) -> ProviderType {
         "kiro" => ProviderType::Kiro,
         "codex" => ProviderType::OpenAI,
         "qwen" => ProviderType::Custom,
+        "antigravity" => ProviderType::Antigravity,
         _ => ProviderType::Custom,
     }
 }
@@ -233,10 +262,13 @@ pub struct CredentialInfoRequest {
 
 impl From<CredentialInfoRequest> for CredentialInfo {
     fn from(req: CredentialInfoRequest) -> Self {
+        // 保存原始的 provider_type 字符串
+        let original_provider_type = req.provider_type.clone();
         CredentialInfo {
             id: req.id,
             provider_type: ProviderType::from_str(&req.provider_type)
                 .unwrap_or(ProviderType::Custom),
+            original_provider_type: Some(original_provider_type),
             supported_models: req.supported_models,
             is_healthy: req.is_healthy,
             current_load: req.current_load,

@@ -539,6 +539,54 @@ impl CredentialProviderRegistry {
 
         info!("Plugin installed to: {:?}", target_dir);
 
+        // 尝试下载 UI 资源包（如果存在）
+        let ui_url = if version_tag == "latest" {
+            format!(
+                "https://github.com/{}/{}/releases/latest/download/{}-ui.zip",
+                owner, repo, repo
+            )
+        } else {
+            format!(
+                "https://github.com/{}/{}/releases/download/{}/{}-ui.zip",
+                owner, repo, version_tag, repo
+            )
+        };
+
+        info!("Trying to download UI assets from: {}", ui_url);
+
+        if let Ok(ui_response) = client.get(&ui_url).send().await {
+            if ui_response.status().is_success() {
+                if let Ok(ui_bytes) = ui_response.bytes().await {
+                    let ui_cursor = std::io::Cursor::new(ui_bytes);
+                    if let Ok(mut ui_archive) = zip::ZipArchive::new(ui_cursor) {
+                        for i in 0..ui_archive.len() {
+                            if let Ok(mut file) = ui_archive.by_index(i) {
+                                let outpath = target_dir.join(file.name());
+
+                                if file.name().ends_with('/') {
+                                    let _ = std::fs::create_dir_all(&outpath);
+                                } else {
+                                    if let Some(p) = outpath.parent() {
+                                        if !p.exists() {
+                                            let _ = std::fs::create_dir_all(p);
+                                        }
+                                    }
+                                    if let Ok(mut outfile) = std::fs::File::create(&outpath) {
+                                        let _ = std::io::copy(&mut file, &mut outfile);
+                                    }
+                                }
+                            }
+                        }
+                        info!("UI assets installed for plugin: {}", plugin_id);
+                    }
+                }
+            } else {
+                info!("No UI assets available for plugin: {} (HTTP {})", plugin_id, ui_response.status());
+            }
+        } else {
+            info!("No UI assets available for plugin: {}", plugin_id);
+        }
+
         // 注册插件（创建 PluginInstance）
         self.register_from_dir(&target_dir, &plugin_id).await?;
 
