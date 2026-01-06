@@ -581,7 +581,11 @@ impl CredentialProviderRegistry {
                     }
                 }
             } else {
-                info!("No UI assets available for plugin: {} (HTTP {})", plugin_id, ui_response.status());
+                info!(
+                    "No UI assets available for plugin: {} (HTTP {})",
+                    plugin_id,
+                    ui_response.status()
+                );
             }
         } else {
             info!("No UI assets available for plugin: {}", plugin_id);

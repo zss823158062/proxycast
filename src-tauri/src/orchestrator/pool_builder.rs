@@ -109,7 +109,9 @@ impl ProviderDefinition {
                     model_lower.starts_with(parts[0])
                 } else {
                     // 复杂模式，回退到简单包含检查
-                    parts.iter().all(|p| p.is_empty() || model_lower.contains(p))
+                    parts
+                        .iter()
+                        .all(|p| p.is_empty() || model_lower.contains(p))
                 }
             } else {
                 model_lower.contains(&pattern_lower)

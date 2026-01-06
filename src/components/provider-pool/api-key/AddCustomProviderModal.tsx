@@ -7,7 +7,13 @@
  * **Validates: Requirements 6.1, 6.2**
  */
 
-import React, { useState, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect,
+} from "react";
 import { cn } from "@/lib/utils";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/Modal";
 import { Button } from "@/components/ui/button";
@@ -20,6 +26,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Search, X } from "lucide-react";
+import { useModelRegistry } from "@/hooks/useModelRegistry";
 import type { ProviderType } from "@/lib/types/provider";
 import type { AddCustomProviderRequest } from "@/lib/api/apiKeyProvider";
 
@@ -54,6 +62,114 @@ const PROVIDER_TYPE_EXTRA_FIELDS: Record<ProviderType, string[]> = {
   "new-api": [],
   gateway: [],
 };
+
+/** 已知厂商配置 */
+interface KnownProvider {
+  id: string;
+  name: string;
+  type: ProviderType;
+  apiHost?: string;
+}
+
+/** 已知厂商列表（用于快速填充） */
+const KNOWN_PROVIDERS: KnownProvider[] = [
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    type: "anthropic",
+    apiHost: "https://api.anthropic.com",
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    type: "openai",
+    apiHost: "https://api.openai.com",
+  },
+  {
+    id: "google",
+    name: "Google (Gemini)",
+    type: "gemini",
+    apiHost: "https://generativelanguage.googleapis.com",
+  },
+  {
+    id: "alibaba",
+    name: "阿里云 (通义千问)",
+    type: "openai",
+    apiHost: "https://dashscope.aliyuncs.com/compatible-mode",
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    type: "openai",
+    apiHost: "https://api.deepseek.com",
+  },
+  {
+    id: "moonshot",
+    name: "Moonshot (月之暗面)",
+    type: "openai",
+    apiHost: "https://api.moonshot.cn",
+  },
+  {
+    id: "zhipu",
+    name: "智谱 AI",
+    type: "openai",
+    apiHost: "https://open.bigmodel.cn/api/paas",
+  },
+  {
+    id: "baichuan",
+    name: "百川智能",
+    type: "openai",
+    apiHost: "https://api.baichuan-ai.com",
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    type: "openai",
+    apiHost: "https://api.minimax.chat",
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    type: "openai",
+    apiHost: "https://api.groq.com/openai",
+  },
+  {
+    id: "together",
+    name: "Together AI",
+    type: "openai",
+    apiHost: "https://api.together.xyz",
+  },
+  {
+    id: "fireworks",
+    name: "Fireworks AI",
+    type: "openai",
+    apiHost: "https://api.fireworks.ai/inference",
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    type: "openai",
+    apiHost: "https://api.perplexity.ai",
+  },
+  {
+    id: "mistral",
+    name: "Mistral AI",
+    type: "openai",
+    apiHost: "https://api.mistral.ai",
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    type: "openai",
+    apiHost: "https://api.cohere.ai",
+  },
+  {
+    id: "ollama",
+    name: "Ollama (本地)",
+    type: "ollama",
+    apiHost: "http://localhost:11434",
+  },
+];
 
 // ============================================================================
 // 类型定义
@@ -204,6 +320,88 @@ export const AddCustomProviderModal: React.FC<AddCustomProviderModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // 厂商搜索状态
+  const [providerSearch, setProviderSearch] = useState("");
+  const [showProviderDropdown, setShowProviderDropdown] = useState(false);
+  const [selectedKnownProvider, setSelectedKnownProvider] =
+    useState<KnownProvider | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // 从 model_registry 获取额外的 Provider 信息
+  const { groupedByProvider } = useModelRegistry({ autoLoad: true });
+
+  // 合并已知厂商和 model_registry 中的厂商
+  const allProviders = useMemo(() => {
+    const providers = [...KNOWN_PROVIDERS];
+    const existingIds = new Set(providers.map((p) => p.id));
+
+    // 从 model_registry 添加额外的厂商
+    groupedByProvider.forEach((models, providerId) => {
+      if (!existingIds.has(providerId) && models.length > 0) {
+        const firstModel = models[0];
+        providers.push({
+          id: providerId,
+          name: firstModel.provider_name,
+          type: "openai" as ProviderType, // 默认使用 OpenAI 兼容
+        });
+      }
+    });
+
+    return providers;
+  }, [groupedByProvider]);
+
+  // 过滤厂商列表
+  const filteredProviders = useMemo(() => {
+    if (!providerSearch.trim()) {
+      return allProviders;
+    }
+    const query = providerSearch.toLowerCase();
+    return allProviders.filter(
+      (p) =>
+        p.name.toLowerCase().includes(query) ||
+        p.id.toLowerCase().includes(query),
+    );
+  }, [allProviders, providerSearch]);
+
+  // 点击外部关闭下拉框
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        searchInputRef.current &&
+        !searchInputRef.current.contains(event.target as Node)
+      ) {
+        setShowProviderDropdown(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // 选择已知厂商
+  const handleSelectKnownProvider = useCallback((provider: KnownProvider) => {
+    setSelectedKnownProvider(provider);
+    setProviderSearch(provider.name);
+    setShowProviderDropdown(false);
+
+    // 自动填充表单
+    setFormState((prev) => ({
+      ...prev,
+      name: provider.name,
+      type: provider.type,
+      apiHost: provider.apiHost || "",
+    }));
+  }, []);
+
+  // 清除选中的厂商
+  const handleClearKnownProvider = useCallback(() => {
+    setSelectedKnownProvider(null);
+    setProviderSearch("");
+  }, []);
+
   // 获取当前类型需要的额外字段
   const extraFields = useMemo(
     () => PROVIDER_TYPE_EXTRA_FIELDS[formState.type] || [],
@@ -215,6 +413,9 @@ export const AddCustomProviderModal: React.FC<AddCustomProviderModalProps> = ({
     setFormState(INITIAL_FORM_STATE);
     setErrors({});
     setSubmitError(null);
+    setProviderSearch("");
+    setSelectedKnownProvider(null);
+    setShowProviderDropdown(false);
   }, []);
 
   // 关闭模态框
@@ -291,6 +492,78 @@ export const AddCustomProviderModal: React.FC<AddCustomProviderModalProps> = ({
       <ModalHeader>添加自定义 Provider</ModalHeader>
 
       <ModalBody className="space-y-4">
+        {/* 搜索厂商（可选） */}
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium">
+            快速选择厂商{" "}
+            <span className="text-muted-foreground text-xs">(可选)</span>
+          </Label>
+          <div className="relative">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                type="text"
+                value={providerSearch}
+                onChange={(e) => {
+                  setProviderSearch(e.target.value);
+                  setShowProviderDropdown(true);
+                  if (selectedKnownProvider) {
+                    setSelectedKnownProvider(null);
+                  }
+                }}
+                onFocus={() => setShowProviderDropdown(true)}
+                placeholder="搜索厂商名称..."
+                disabled={isSubmitting}
+                className="pl-10 pr-8"
+                data-testid="provider-search-input"
+              />
+              {(providerSearch || selectedKnownProvider) && (
+                <button
+                  type="button"
+                  onClick={handleClearKnownProvider}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* 下拉列表 */}
+            {showProviderDropdown && filteredProviders.length > 0 && (
+              <div
+                ref={dropdownRef}
+                className="absolute left-0 right-0 top-full z-[9999] mt-1 max-h-48 overflow-y-auto rounded-md border bg-background shadow-lg"
+                data-testid="provider-dropdown"
+              >
+                {filteredProviders.map((provider) => (
+                  <button
+                    key={provider.id}
+                    type="button"
+                    onClick={() => handleSelectKnownProvider(provider)}
+                    className={cn(
+                      "w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors",
+                      selectedKnownProvider?.id === provider.id && "bg-muted",
+                    )}
+                  >
+                    <div className="font-medium">{provider.name}</div>
+                    {provider.apiHost && (
+                      <div className="text-xs text-muted-foreground truncate">
+                        {provider.apiHost}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            选择已知厂商可自动填充配置，或直接手动填写下方表单
+          </p>
+        </div>
+
+        <div className="border-t border-border" />
+
         {/* Provider 名称 */}
         <div className="space-y-1.5">
           <Label htmlFor="provider-name" className="text-sm font-medium">

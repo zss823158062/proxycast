@@ -61,7 +61,7 @@ export function EnhancedModelList({
 }: EnhancedModelListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(["favorites"])
+    new Set(["favorites"]),
   );
 
   // 过滤模型
@@ -74,7 +74,7 @@ export function EnhancedModelList({
         m.id.toLowerCase().includes(query) ||
         m.display_name.toLowerCase().includes(query) ||
         m.provider_name.toLowerCase().includes(query) ||
-        m.family?.toLowerCase().includes(query)
+        m.family?.toLowerCase().includes(query),
     );
   }, [models, searchQuery]);
 
@@ -130,7 +130,7 @@ export function EnhancedModelList({
       <div
         className={cn(
           "flex items-center justify-center py-8 text-destructive",
-          className
+          className,
         )}
       >
         <AlertCircle className="h-5 w-5 mr-2" />
@@ -248,7 +248,7 @@ function ModelItem({
     <div
       className={cn(
         "flex items-center justify-between px-3 py-2.5 hover:bg-muted/30 transition-colors cursor-pointer",
-        isSelected && "bg-primary/5"
+        isSelected && "bg-primary/5",
       )}
       onClick={onSelect}
     >
@@ -257,7 +257,9 @@ function ModelItem({
         <div
           className={cn(
             "w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center",
-            isSelected ? "border-primary bg-primary" : "border-muted-foreground"
+            isSelected
+              ? "border-primary bg-primary"
+              : "border-muted-foreground",
           )}
         >
           {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
@@ -313,9 +315,7 @@ function ModelItem({
         {showPricing && model.pricing && (
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <DollarSign className="h-3 w-3" />
-            <span>
-              {model.pricing.input_per_million?.toFixed(2) || "?"}
-            </span>
+            <span>{model.pricing.input_per_million?.toFixed(2) || "?"}</span>
           </div>
         )}
 
@@ -334,7 +334,7 @@ function ModelItem({
               "h-4 w-4",
               isFavorite
                 ? "text-yellow-500 fill-yellow-500"
-                : "text-muted-foreground"
+                : "text-muted-foreground",
             )}
           />
         </button>
@@ -346,9 +346,20 @@ function ModelItem({
 /** 服务等级徽章 */
 function TierBadge({ tier }: { tier: string }) {
   const config = {
-    mini: { label: "Mini", color: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" },
-    pro: { label: "Pro", color: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" },
-    max: { label: "Max", color: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300" },
+    mini: {
+      label: "Mini",
+      color:
+        "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
+    },
+    pro: {
+      label: "Pro",
+      color: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+    },
+    max: {
+      label: "Max",
+      color:
+        "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+    },
   }[tier] || { label: tier, color: "bg-gray-100 text-gray-700" };
 
   return (
@@ -361,7 +372,7 @@ function TierBadge({ tier }: { tier: string }) {
 /** 获取分组名称 */
 function getGroupName(
   groupId: string,
-  firstModel: EnhancedModelMetadata
+  firstModel: EnhancedModelMetadata,
 ): string {
   if (groupId === "favorites") return "收藏";
   if (groupId === "all") return "全部模型";

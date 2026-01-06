@@ -5,8 +5,8 @@
 use crate::data::get_local_models;
 use crate::database::DbConnection;
 use crate::models::model_registry::{
-    EnhancedModelMetadata, ModelSource, ModelStatus,
-    ModelSyncState, ModelTier, ModelsDevProvider, UserModelPreference,
+    EnhancedModelMetadata, ModelSource, ModelStatus, ModelSyncState, ModelTier, ModelsDevProvider,
+    UserModelPreference,
 };
 use rusqlite::params;
 use std::collections::HashMap;
@@ -135,10 +135,7 @@ impl ModelRegistryService {
                 let local_models = get_local_models();
                 let merged = self.merge_models(models_dev_models, local_models);
 
-                tracing::info!(
-                    "[ModelRegistry] 获取并合并了 {} 个模型",
-                    merged.len()
-                );
+                tracing::info!("[ModelRegistry] 获取并合并了 {} 个模型", merged.len());
 
                 // 更新缓存
                 {
@@ -193,10 +190,7 @@ impl ModelRegistryService {
             .map_err(|e| format!("请求 models.dev 失败: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!(
-                "models.dev 返回错误状态码: {}",
-                response.status()
-            ));
+            return Err(format!("models.dev 返回错误状态码: {}", response.status()));
         }
 
         let data: HashMap<String, ModelsDevProvider> = response
@@ -283,10 +277,8 @@ impl ModelRegistryService {
                         provider_name: row.get(3)?,
                         family: row.get(4)?,
                         tier: tier_str.parse().unwrap_or(ModelTier::Pro),
-                        capabilities: serde_json::from_str(&capabilities_json)
-                            .unwrap_or_default(),
-                        pricing: pricing_json
-                            .and_then(|s| serde_json::from_str(&s).ok()),
+                        capabilities: serde_json::from_str(&capabilities_json).unwrap_or_default(),
+                        pricing: pricing_json.and_then(|s| serde_json::from_str(&s).ok()),
                         limits: serde_json::from_str(&limits_json).unwrap_or_default(),
                         status: status_str.parse().unwrap_or(ModelStatus::Active),
                         release_date: row.get(10)?,
@@ -361,8 +353,7 @@ impl ModelRegistryService {
             .map_err(|e| e.to_string())?;
 
         for model in models {
-            let capabilities_json =
-                serde_json::to_string(&model.capabilities).unwrap_or_default();
+            let capabilities_json = serde_json::to_string(&model.capabilities).unwrap_or_default();
             let pricing_json = model
                 .pricing
                 .as_ref()
@@ -402,7 +393,11 @@ impl ModelRegistryService {
     async fn save_sync_state(&self) -> Result<(), String> {
         let (last_sync_at, model_count, last_error) = {
             let state = self.sync_state.read().await;
-            (state.last_sync_at, state.model_count, state.last_error.clone())
+            (
+                state.last_sync_at,
+                state.model_count,
+                state.last_error.clone(),
+            )
         };
 
         let conn = self.db.lock().map_err(|e| e.to_string())?;
@@ -485,10 +480,7 @@ impl ModelRegistryService {
             .collect();
 
         // 按分数降序排序
-        scored.sort_by(|a, b| {
-            b.0.partial_cmp(&a.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         scored
             .into_iter()

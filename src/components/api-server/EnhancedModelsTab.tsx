@@ -21,7 +21,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModelRegistry } from "@/hooks/useModelRegistry";
-import type { EnhancedModelMetadata, ModelTier } from "@/lib/types/modelRegistry";
+import type {
+  EnhancedModelMetadata,
+  ModelTier,
+} from "@/lib/types/modelRegistry";
 
 export function EnhancedModelsTab() {
   const {
@@ -113,10 +116,15 @@ export function EnhancedModelsTab() {
               "flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
               showFavoritesOnly
                 ? "bg-yellow-100 border-yellow-300 text-yellow-700 dark:bg-yellow-900 dark:border-yellow-700 dark:text-yellow-300"
-                : "hover:bg-muted"
+                : "hover:bg-muted",
             )}
           >
-            <Star className={cn("h-4 w-4", showFavoritesOnly && "fill-yellow-500 text-yellow-500")} />
+            <Star
+              className={cn(
+                "h-4 w-4",
+                showFavoritesOnly && "fill-yellow-500 text-yellow-500",
+              )}
+            />
             收藏
           </button>
         </div>
@@ -127,7 +135,9 @@ export function EnhancedModelsTab() {
             onClick={() => setSelectedProvider(null)}
             className={cn(
               "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-              !selectedProvider ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+              !selectedProvider
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/80",
             )}
           >
             全部 ({models.length})
@@ -138,10 +148,16 @@ export function EnhancedModelsTab() {
             return (
               <button
                 key={providerId}
-                onClick={() => setSelectedProvider(selectedProvider === providerId ? null : providerId)}
+                onClick={() =>
+                  setSelectedProvider(
+                    selectedProvider === providerId ? null : providerId,
+                  )
+                }
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                  selectedProvider === providerId ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+                  selectedProvider === providerId
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-muted/80",
                 )}
               >
                 {providerName} ({providerModels.length})
@@ -157,10 +173,14 @@ export function EnhancedModelsTab() {
           {(["mini", "pro", "max"] as ModelTier[]).map((tier) => (
             <button
               key={tier}
-              onClick={() => setSelectedTier(selectedTier === tier ? null : tier)}
+              onClick={() =>
+                setSelectedTier(selectedTier === tier ? null : tier)
+              }
               className={cn(
                 "rounded-lg px-3 py-1 text-xs font-medium transition-colors",
-                selectedTier === tier ? getTierButtonActiveClass(tier) : "bg-muted hover:bg-muted/80"
+                selectedTier === tier
+                  ? getTierButtonActiveClass(tier)
+                  : "bg-muted hover:bg-muted/80",
               )}
             >
               {tier.toUpperCase()}
@@ -174,7 +194,9 @@ export function EnhancedModelsTab() {
         <div className="border-b px-4 py-3">
           <div className="flex items-center justify-between">
             <span className="font-medium">模型列表</span>
-            <span className="text-sm text-muted-foreground">{filteredModels.length} 个模型</span>
+            <span className="text-sm text-muted-foreground">
+              {filteredModels.length} 个模型
+            </span>
           </div>
         </div>
 
@@ -308,7 +330,9 @@ function ModelRow({
           <Star
             className={cn(
               "h-5 w-5",
-              isFavorite ? "text-yellow-500 fill-yellow-500" : "text-muted-foreground hover:text-yellow-400"
+              isFavorite
+                ? "text-yellow-500 fill-yellow-500"
+                : "text-muted-foreground hover:text-yellow-400",
             )}
           />
         </button>
@@ -336,10 +360,24 @@ function ModelRow({
 /** 服务等级徽章 */
 function TierBadge({ tier }: { tier: string }) {
   const config = {
-    mini: { label: "Mini", color: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" },
-    pro: { label: "Pro", color: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" },
-    max: { label: "Max", color: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300" },
-  }[tier] || { label: tier, color: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300" };
+    mini: {
+      label: "Mini",
+      color:
+        "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
+    },
+    pro: {
+      label: "Pro",
+      color: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+    },
+    max: {
+      label: "Max",
+      color:
+        "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+    },
+  }[tier] || {
+    label: tier,
+    color: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  };
 
   return (
     <span className={cn("text-xs px-1.5 py-0.5 rounded", config.color)}>

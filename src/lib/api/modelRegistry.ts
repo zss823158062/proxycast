@@ -33,7 +33,7 @@ export async function refreshModelRegistry(): Promise<void> {
  */
 export async function searchModels(
   query: string,
-  limit?: number
+  limit?: number,
 ): Promise<EnhancedModelMetadata[]> {
   return invoke("search_models", { query, limit });
 }
@@ -82,7 +82,7 @@ export async function getModelSyncState(): Promise<ModelSyncState> {
  * @param providerId Provider ID
  */
 export async function getModelsForProvider(
-  providerId: string
+  providerId: string,
 ): Promise<EnhancedModelMetadata[]> {
   return invoke("get_models_for_provider", { providerId });
 }
@@ -92,7 +92,7 @@ export async function getModelsForProvider(
  * @param tier 服务等级
  */
 export async function getModelsByTier(
-  tier: ModelTier
+  tier: ModelTier,
 ): Promise<EnhancedModelMetadata[]> {
   return invoke("get_models_by_tier", { tier });
 }

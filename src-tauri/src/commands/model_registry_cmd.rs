@@ -28,9 +28,7 @@ pub async fn get_model_registry(
 
 /// 刷新模型注册表（从 models.dev 获取最新数据）
 #[tauri::command]
-pub async fn refresh_model_registry(
-    state: State<'_, ModelRegistryState>,
-) -> Result<(), String> {
+pub async fn refresh_model_registry(state: State<'_, ModelRegistryState>) -> Result<(), String> {
     let guard = state.read().await;
     let service = guard
         .as_ref()

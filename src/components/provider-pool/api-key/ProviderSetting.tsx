@@ -19,6 +19,7 @@ import {
   ConnectionTestButton,
   ConnectionTestResult,
 } from "./ConnectionTestButton";
+import { ProviderModelList } from "./ProviderModelList";
 import type {
   ProviderWithKeysDisplay,
   UpdateProviderRequest,
@@ -230,6 +231,14 @@ export const ProviderSetting: React.FC<ProviderSettingProps> = ({
               请先添加 API Key 后再进行连接测试
             </p>
           )}
+        </section>
+
+        {/* 分隔线 */}
+        <div className="border-t border-border" />
+
+        {/* 支持的模型列表 */}
+        <section data-testid="supported-models-section">
+          <ProviderModelList providerType={provider.type} />
         </section>
       </div>
     </div>

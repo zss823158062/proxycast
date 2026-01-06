@@ -55,7 +55,7 @@ interface UseModelRegistryReturn {
  */
 function sortModels(
   models: EnhancedModelMetadata[],
-  preferences: Map<string, UserModelPreference>
+  preferences: Map<string, UserModelPreference>,
 ): EnhancedModelMetadata[] {
   return [...models].sort((a, b) => {
     const prefA = preferences.get(a.id);
@@ -88,7 +88,7 @@ function sortModels(
  */
 function fuzzySearch(
   models: EnhancedModelMetadata[],
-  query: string
+  query: string,
 ): EnhancedModelMetadata[] {
   if (!query.trim()) {
     return models;
@@ -140,7 +140,7 @@ function fuzzySearch(
 }
 
 export function useModelRegistry(
-  options: UseModelRegistryOptions = {}
+  options: UseModelRegistryOptions = {},
 ): UseModelRegistryReturn {
   const {
     autoLoad = true,
@@ -206,7 +206,7 @@ export function useModelRegistry(
     // 等级过滤
     if (tierFilter && tierFilter.length > 0) {
       filtered = filtered.filter((m) =>
-        tierFilter.includes(m.tier as ModelTier)
+        tierFilter.includes(m.tier as ModelTier),
       );
     }
 
@@ -227,7 +227,7 @@ export function useModelRegistry(
     (query: string): EnhancedModelMetadata[] => {
       return fuzzySearch(models, query);
     },
-    [models]
+    [models],
   );
 
   // 切换收藏
@@ -283,7 +283,7 @@ export function useModelRegistry(
     (modelId: string) => {
       return allModels.find((m) => m.id === modelId);
     },
-    [allModels]
+    [allModels],
   );
 
   // 按 Provider 分组

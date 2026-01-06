@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Bot, ChevronDown, Check, Box, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,8 +8,47 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Navbar } from "../styles";
-import { PROVIDER_CONFIG } from "../types";
 import { cn } from "@/lib/utils";
+import { useProviderPool } from "@/hooks/useProviderPool";
+import { useApiKeyProvider } from "@/hooks/useApiKeyProvider";
+import { useModelRegistry } from "@/hooks/useModelRegistry";
+
+// OAuth 凭证类型到显示名称和 registry ID 的映射
+const CREDENTIAL_TYPE_CONFIG: Record<
+  string,
+  { label: string; registryId: string }
+> = {
+  kiro: { label: "Kiro", registryId: "anthropic" },
+  gemini: { label: "Gemini", registryId: "google" },
+  qwen: { label: "通义千问", registryId: "alibaba" },
+  antigravity: { label: "Antigravity", registryId: "google" },
+  codex: { label: "Codex", registryId: "openai" },
+  claude_oauth: { label: "Claude OAuth", registryId: "anthropic" },
+  iflow: { label: "iFlow", registryId: "custom" },
+  openai: { label: "OpenAI", registryId: "openai" },
+  claude: { label: "Claude", registryId: "anthropic" },
+  gemini_api_key: { label: "Gemini", registryId: "google" },
+};
+
+// API Key Provider 类型到显示名称和 registry ID 的映射
+const API_KEY_PROVIDER_CONFIG: Record<
+  string,
+  { label: string; registryId: string }
+> = {
+  anthropic: { label: "Anthropic", registryId: "anthropic" },
+  openai: { label: "OpenAI", registryId: "openai" },
+  gemini: { label: "Gemini", registryId: "google" },
+  "azure-openai": { label: "Azure OpenAI", registryId: "openai" },
+  vertexai: { label: "VertexAI", registryId: "google" },
+  ollama: { label: "Ollama", registryId: "ollama" },
+};
+
+/** 已配置的 Provider 信息 */
+interface ConfiguredProvider {
+  key: string;
+  label: string;
+  registryId: string;
+}
 
 interface ChatNavbarProps {
   providerType: string;
@@ -34,9 +73,79 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
 }) => {
   const [open, setOpen] = useState(false);
 
-  const selectedProviderLabel =
-    PROVIDER_CONFIG[providerType]?.label || providerType;
-  const currentModels = PROVIDER_CONFIG[providerType]?.models || [];
+  // 获取凭证池数据
+  const { overview: oauthCredentials } = useProviderPool();
+  const { providers: apiKeyProviders } = useApiKeyProvider();
+
+  // 获取模型注册表数据
+  const { models: registryModels } = useModelRegistry({ autoLoad: true });
+
+  // 计算已配置的 Provider 列表
+  const configuredProviders = useMemo(() => {
+    const providerMap = new Map<string, ConfiguredProvider>();
+
+    // 从 OAuth 凭证提取 Provider
+    oauthCredentials.forEach((overview) => {
+      if (overview.credentials.length > 0) {
+        const config = CREDENTIAL_TYPE_CONFIG[overview.provider_type];
+        if (config && !providerMap.has(overview.provider_type)) {
+          providerMap.set(overview.provider_type, {
+            key: overview.provider_type,
+            label: config.label,
+            registryId: config.registryId,
+          });
+        }
+      }
+    });
+
+    // 从 API Key Provider 提取（只包含有 API Key 的）
+    apiKeyProviders
+      .filter((p) => p.api_key_count > 0 && p.enabled)
+      .forEach((provider) => {
+        const config = API_KEY_PROVIDER_CONFIG[provider.type];
+        if (config && !providerMap.has(provider.type)) {
+          providerMap.set(provider.type, {
+            key: provider.type,
+            label: config.label,
+            registryId: config.registryId,
+          });
+        }
+      });
+
+    return Array.from(providerMap.values());
+  }, [oauthCredentials, apiKeyProviders]);
+
+  // 获取当前选中 Provider 的配置
+  const selectedProvider = useMemo(() => {
+    return configuredProviders.find((p) => p.key === providerType);
+  }, [configuredProviders, providerType]);
+
+  // 获取当前 Provider 的模型列表（从 model_registry 获取）
+  const currentModels = useMemo(() => {
+    if (!selectedProvider) return [];
+
+    // 从 model_registry 获取模型
+    return registryModels
+      .filter((m) => m.provider_id === selectedProvider.registryId)
+      .map((m) => m.id);
+  }, [selectedProvider, registryModels]);
+
+  // 如果当前选中的 Provider 不在已配置列表中，自动切换到第一个已配置的
+  useEffect(() => {
+    if (configuredProviders.length > 0 && !selectedProvider) {
+      const firstProvider = configuredProviders[0];
+      setProviderType(firstProvider.key);
+    }
+  }, [configuredProviders, selectedProvider, setProviderType]);
+
+  // 当 Provider 切换时，自动选择第一个模型
+  useEffect(() => {
+    if (currentModels.length > 0 && !currentModels.includes(model)) {
+      setModel(currentModels[0]);
+    }
+  }, [currentModels, model, setModel]);
+
+  const selectedProviderLabel = selectedProvider?.label || providerType;
 
   return (
     <Navbar>
@@ -75,36 +184,36 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
           >
             {/* Provider/Model Selection */}
             <div className="flex h-[300px]">
-              {/* Left Column: Providers */}
+              {/* Left Column: Providers (只显示已配置的) */}
               <div className="w-[140px] border-r bg-muted/30 p-2 flex flex-col gap-1 overflow-y-auto">
                 <div className="text-xs font-semibold text-muted-foreground px-2 py-1.5 mb-1">
                   Providers
                 </div>
-                {Object.entries(PROVIDER_CONFIG).map(([key, config]) => (
-                  <button
-                    key={key}
-                    onClick={() => {
-                      setProviderType(key);
-                      // Auto-select first model if available
-                      if (config.models.length > 0) {
-                        setModel(config.models[0]);
-                      } else {
-                        setModel("");
-                      }
-                    }}
-                    className={cn(
-                      "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-md transition-colors text-left",
-                      providerType === key
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "hover:bg-muted text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {config.label}
-                    {providerType === key && (
-                      <div className="w-1 h-1 rounded-full bg-primary" />
-                    )}
-                  </button>
-                ))}
+                {configuredProviders.length === 0 ? (
+                  <div className="text-xs text-muted-foreground p-2">
+                    暂无已配置的 Provider
+                  </div>
+                ) : (
+                  configuredProviders.map((provider) => (
+                    <button
+                      key={provider.key}
+                      onClick={() => {
+                        setProviderType(provider.key);
+                      }}
+                      className={cn(
+                        "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-md transition-colors text-left",
+                        providerType === provider.key
+                          ? "bg-primary/10 text-primary font-medium"
+                          : "hover:bg-muted text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {provider.label}
+                      {providerType === provider.key && (
+                        <div className="w-1 h-1 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  ))
+                )}
               </div>
 
               {/* Right Column: Models */}

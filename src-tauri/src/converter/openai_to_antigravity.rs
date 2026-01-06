@@ -602,8 +602,7 @@ pub fn convert_openai_to_antigravity_with_context(
                         .parameters
                         .as_ref()
                         .map(|p| {
-                            let mut schema =
-                                clean_parameters(Some(p.clone())).unwrap_or_default();
+                            let mut schema = clean_parameters(Some(p.clone())).unwrap_or_default();
                             // 确保有 type 和 properties
                             if schema.get("type").is_none() {
                                 schema["type"] = serde_json::json!("object");
@@ -613,9 +612,7 @@ pub fn convert_openai_to_antigravity_with_context(
                             }
                             schema
                         })
-                        .unwrap_or_else(|| {
-                            serde_json::json!({"type": "object", "properties": {}})
-                        });
+                        .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
 
                     if is_claude {
                         // Claude 模型使用 parameters 字段（标准 Gemini 格式）

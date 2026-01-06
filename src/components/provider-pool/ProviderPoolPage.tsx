@@ -36,6 +36,7 @@ import { ProviderIcon } from "@/icons/providers";
 import { ApiKeyProviderSection, AddCustomProviderModal } from "./api-key";
 import { OAuthPluginTab } from "./OAuthPluginTab";
 import { RelayProvidersSection } from "./RelayProvidersSection";
+import { ModelRegistryTab } from "./ModelRegistryTab";
 import type { AddCustomProviderRequest } from "@/lib/api/apiKeyProvider";
 import {
   getLocalKiroCredentialUuid,
@@ -84,7 +85,7 @@ const isConfigTab = (tab: TabType): tab is ConfigTabType => {
 };
 
 // 分类类型
-type CategoryType = "oauth" | "apikey" | "plugins" | "connect";
+type CategoryType = "oauth" | "apikey" | "plugins" | "connect" | "models";
 
 export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
   (_props, ref) => {
@@ -410,6 +411,19 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
           >
             Connect
           </button>
+          <button
+            onClick={() => {
+              setActiveCategory("models");
+            }}
+            className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
+              activeCategory === "models"
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted"
+            }`}
+            data-testid="models-category-tab"
+          >
+            模型库
+          </button>
         </div>
 
         {/* OAuth 凭证分类 - Provider 选择图标网格 */}
@@ -477,6 +491,9 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
             <OAuthPluginTab />
           </div>
         )}
+
+        {/* 模型库分类 */}
+        {activeCategory === "models" && <ModelRegistryTab />}
 
         {/* OAuth 凭证内容 - 卡片布局 */}
         {activeCategory === "oauth" &&

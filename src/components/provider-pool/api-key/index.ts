@@ -45,3 +45,8 @@ export type { DeleteProviderDialogProps } from "./DeleteProviderDialog";
 
 export { ImportExportDialog } from "./ImportExportDialog";
 export type { ImportExportDialogProps } from "./ImportExportDialog";
+
+export { ProviderModelList } from "./ProviderModelList";
+export type { ProviderModelListProps } from "./ProviderModelList";
+
+export { mapProviderTypeToRegistryId } from "./providerTypeMapping";

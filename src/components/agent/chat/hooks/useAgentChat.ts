@@ -141,9 +141,12 @@ export function useAgentChat() {
   // 如果不兼容，自动切换到新 provider 的第一个模型
   useEffect(() => {
     const currentProviderModels = providerConfig[providerType]?.models || [];
-    if (currentProviderModels.length > 0 && !currentProviderModels.includes(model)) {
+    if (
+      currentProviderModels.length > 0 &&
+      !currentProviderModels.includes(model)
+    ) {
       console.log(
-        `[useAgentChat] 模型 ${model} 不在 ${providerType} 支持列表中，自动切换到 ${currentProviderModels[0]}`
+        `[useAgentChat] 模型 ${model} 不在 ${providerType} 支持列表中，自动切换到 ${currentProviderModels[0]}`,
       );
       setModel(currentProviderModels[0]);
     }

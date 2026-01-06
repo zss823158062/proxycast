@@ -598,7 +598,10 @@ mod tests {
 
     #[test]
     fn test_model_status_parsing() {
-        assert_eq!("active".parse::<ModelStatus>().unwrap(), ModelStatus::Active);
+        assert_eq!(
+            "active".parse::<ModelStatus>().unwrap(),
+            ModelStatus::Active
+        );
         assert_eq!(
             "deprecated".parse::<ModelStatus>().unwrap(),
             ModelStatus::Deprecated
