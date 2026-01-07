@@ -54,9 +54,10 @@ const AppContainer = styled.div`
 
 const MainContent = styled.main`
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 `;
 
 const PageWrapper = styled.div`
@@ -71,9 +72,11 @@ const PageWrapper = styled.div`
  */
 const FullscreenWrapper = styled.div`
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 `;
 
 function App() {
