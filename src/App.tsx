@@ -25,6 +25,8 @@ import { ConnectConfirmDialog } from "./components/connect";
 import { showRegistryLoadError } from "./lib/utils/connectError";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useRelayRegistry } from "./hooks/useRelayRegistry";
+import { ComponentDebugProvider } from "./contexts/ComponentDebugContext";
+import { ComponentDebugOverlay } from "./components/dev";
 
 /**
  * 页面类型定义
@@ -229,24 +231,28 @@ function App() {
 
   // 4. 正常主界面
   return (
-    <AppContainer>
-      <AppSidebar currentPage={currentPage} onNavigate={setCurrentPage} />
-      <MainContent>{renderPage()}</MainContent>
-      {/* ProxyCast Connect 确认弹窗 */}
-      {/* _Requirements: 5.2_ */}
-      <ConnectConfirmDialog
-        open={isDialogOpen}
-        relay={relayInfo}
-        relayId={connectPayload?.relay ?? ""}
-        apiKey={connectPayload?.key ?? ""}
-        keyName={connectPayload?.name}
-        isVerified={isVerified}
-        isSaving={isSaving}
-        error={error}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
-    </AppContainer>
+    <ComponentDebugProvider>
+      <AppContainer>
+        <AppSidebar currentPage={currentPage} onNavigate={setCurrentPage} />
+        <MainContent>{renderPage()}</MainContent>
+        {/* ProxyCast Connect 确认弹窗 */}
+        {/* _Requirements: 5.2_ */}
+        <ConnectConfirmDialog
+          open={isDialogOpen}
+          relay={relayInfo}
+          relayId={connectPayload?.relay ?? ""}
+          apiKey={connectPayload?.key ?? ""}
+          keyName={connectPayload?.name}
+          isVerified={isVerified}
+          isSaving={isSaving}
+          error={error}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+        {/* 组件视图调试覆盖层 */}
+        <ComponentDebugOverlay />
+      </AppContainer>
+    </ComponentDebugProvider>
   );
 }
 
