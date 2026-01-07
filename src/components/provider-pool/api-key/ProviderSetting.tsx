@@ -238,7 +238,10 @@ export const ProviderSetting: React.FC<ProviderSettingProps> = ({
 
         {/* 支持的模型列表 */}
         <section data-testid="supported-models-section">
-          <ProviderModelList providerType={provider.type} />
+          <ProviderModelList
+            providerId={provider.id}
+            providerType={provider.type}
+          />
         </section>
       </div>
     </div>

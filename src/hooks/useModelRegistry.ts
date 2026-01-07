@@ -100,36 +100,43 @@ function fuzzySearch(
     .map((model) => {
       let score = 0;
 
-      // 精确匹配 ID
+      // 精确匹配 ID（最高优先级）
       if (model.id.toLowerCase() === queryLower) {
-        score += 100;
+        score += 1000;
+      } else if (model.id.toLowerCase().startsWith(queryLower)) {
+        // ID 以搜索词开头
+        score += 500;
       } else if (model.id.toLowerCase().includes(queryLower)) {
-        score += 50;
+        score += 100;
       }
 
       // 显示名称匹配
-      if (model.display_name.toLowerCase().includes(queryLower)) {
-        score += 30;
+      if (model.display_name.toLowerCase().startsWith(queryLower)) {
+        score += 80;
+      } else if (model.display_name.toLowerCase().includes(queryLower)) {
+        score += 40;
       }
 
       // Provider 匹配
-      if (model.provider_name.toLowerCase().includes(queryLower)) {
-        score += 20;
+      if (model.provider_id.toLowerCase() === queryLower) {
+        score += 200;
+      } else if (model.provider_name.toLowerCase().includes(queryLower)) {
+        score += 30;
       }
 
       // 家族匹配
       if (model.family?.toLowerCase().includes(queryLower)) {
-        score += 15;
+        score += 20;
       }
 
-      // 最新版本加分
-      if (model.is_latest) {
-        score += 5;
-      }
-
-      // 活跃状态加分
-      if (model.status === "active") {
-        score += 3;
+      // 只有在有匹配的情况下，才给最新版本和活跃状态加分
+      if (score > 0) {
+        if (model.is_latest) {
+          score += 5;
+        }
+        if (model.status === "active") {
+          score += 3;
+        }
       }
 
       return { model, score };

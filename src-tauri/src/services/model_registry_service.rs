@@ -248,6 +248,18 @@ impl ModelRegistryService {
             }
         }
 
+        // 去重：使用 HashMap 按 id 去重，保留第一个出现的模型
+        let mut seen_ids = std::collections::HashSet::new();
+        let original_count = models.len();
+        models.retain(|m| seen_ids.insert(m.id.clone()));
+
+        if models.len() < original_count {
+            tracing::warn!(
+                "[ModelRegistry] 发现 {} 个重复 ID，已去重",
+                original_count - models.len()
+            );
+        }
+
         // 按 provider_id 和 display_name 排序
         models.sort_by(|a, b| {
             a.provider_id
@@ -429,58 +441,60 @@ impl ModelRegistryService {
 
     /// 保存模型到数据库
     async fn save_models_to_db(&self, models: &[EnhancedModelMetadata]) -> Result<(), String> {
-        let conn = self.db.lock().map_err(|e| e.to_string())?;
+        let mut conn = self.db.lock().map_err(|e| e.to_string())?;
 
-        // 开始事务
-        conn.execute("BEGIN TRANSACTION", [])
-            .map_err(|e| e.to_string())?;
+        // 使用 rusqlite 的事务 API
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         // 清空现有数据
-        conn.execute("DELETE FROM model_registry", [])
+        tx.execute("DELETE FROM model_registry", [])
             .map_err(|e| e.to_string())?;
 
-        // 插入新数据
-        let mut stmt = conn
-            .prepare(
-                "INSERT INTO model_registry (
-                    id, display_name, provider_id, provider_name, family, tier,
-                    capabilities, pricing, limits, status, release_date, is_latest,
-                    description, source, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .map_err(|e| e.to_string())?;
+        // 插入新数据（使用 INSERT OR REPLACE 处理可能的重复 ID）
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT OR REPLACE INTO model_registry (
+                        id, display_name, provider_id, provider_name, family, tier,
+                        capabilities, pricing, limits, status, release_date, is_latest,
+                        description, source, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .map_err(|e| e.to_string())?;
 
-        for model in models {
-            let capabilities_json = serde_json::to_string(&model.capabilities).unwrap_or_default();
-            let pricing_json = model
-                .pricing
-                .as_ref()
-                .map(|p| serde_json::to_string(p).unwrap_or_default());
-            let limits_json = serde_json::to_string(&model.limits).unwrap_or_default();
+            for model in models {
+                let capabilities_json =
+                    serde_json::to_string(&model.capabilities).unwrap_or_default();
+                let pricing_json = model
+                    .pricing
+                    .as_ref()
+                    .map(|p| serde_json::to_string(p).unwrap_or_default());
+                let limits_json = serde_json::to_string(&model.limits).unwrap_or_default();
 
-            stmt.execute(params![
-                model.id,
-                model.display_name,
-                model.provider_id,
-                model.provider_name,
-                model.family,
-                model.tier.to_string(),
-                capabilities_json,
-                pricing_json,
-                limits_json,
-                model.status.to_string(),
-                model.release_date,
-                model.is_latest as i32,
-                model.description,
-                model.source.to_string(),
-                model.created_at,
-                model.updated_at,
-            ])
-            .map_err(|e| e.to_string())?;
+                stmt.execute(params![
+                    model.id,
+                    model.display_name,
+                    model.provider_id,
+                    model.provider_name,
+                    model.family,
+                    model.tier.to_string(),
+                    capabilities_json,
+                    pricing_json,
+                    limits_json,
+                    model.status.to_string(),
+                    model.release_date,
+                    model.is_latest as i32,
+                    model.description,
+                    model.source.to_string(),
+                    model.created_at,
+                    model.updated_at,
+                ])
+                .map_err(|e| e.to_string())?;
+            }
         }
 
         // 提交事务
-        conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
 
         tracing::info!("[ModelRegistry] 保存了 {} 个模型到数据库", models.len());
 
